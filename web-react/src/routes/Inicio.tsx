@@ -1,3 +1,76 @@
+import { useOverview } from '../hooks/useOverview'
+import { useVencimientos } from '../hooks/useVencimientos'
+import { formatMoney, formatUsdApprox } from '../lib/format'
+import { type CicloTotal } from '../lib/types'
+import Card from '../components/ui/Card'
+import TickMark from '../components/ui/TickMark'
+import StatNumber from '../components/ui/StatNumber'
+import CategoryBar from '../components/ui/CategoryBar'
+import AlertPill from '../components/ui/AlertPill'
+import Skeleton from '../components/ui/Skeleton'
+import EmptyState from '../components/ui/EmptyState'
+
 export default function Inicio() {
-  return <div className="cap" style={{ padding: 20 }}>inicio (stub)</div>
+  const { data, isLoading, isError } = useOverview()
+  const venc = useVencimientos()
+  if (isLoading) return <div style={{ padding: 22, display: 'grid', gap: 12 }}><Skeleton h={56} /><Skeleton h={120} /></div>
+  if (isError || !data) return <EmptyState>No pudimos cargar tus datos. Reintentá.</EmptyState>
+  const k = data.kpis
+  const delta = k.gasto_mes - k.gasto_prev_alt
+  const maxCat = Math.max(1, ...data.por_categoria.map((c) => c.total))
+  return (
+    <div style={{ padding: '8px 4px 24px' }}>
+      <section style={{ padding: '8px 18px 6px' }}>
+        <div className="cap">Gasto del mes</div>
+        <div className="num-serif" style={{ fontSize: 'clamp(44px, 13vw, 56px)', marginTop: 8 }}>{formatMoney(k.gasto_mes)}</div>
+        <div style={{ fontSize: 13, color: 'var(--color-sage)', marginTop: 6 }}>{delta >= 0 ? '▲' : '▼'} {formatMoney(Math.abs(delta))} vs mes pasado</div>
+        <div style={{ marginTop: 16 }}><TickMark /></div>
+      </section>
+      <section style={{ display: 'flex', gap: 6, padding: '16px 18px 6px' }}>
+        <StatNumber label="Ingresos">{formatMoney(k.ingreso_mes)}</StatNumber>
+        <StatNumber label="Patrimonio">{formatMoney(data.patrimonio_ars)}</StatNumber>
+        <StatNumber label="En cuotas">{formatMoney(k.cuotas_futuras)}</StatNumber>
+      </section>
+      <div style={{ padding: '12px 18px 0' }}>
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 15, fontWeight: 500 }}><i className="ti ti-credit-card" style={{ marginRight: 7 }} aria-hidden />Cuotas y tarjetas</span>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <div className="cap">Comprometido este mes</div>
+            <div className="num-serif" style={{ fontSize: 32, marginTop: 4 }}>{formatMoney(k.cuotas_futuras)}</div>
+          </div>
+          <div style={{ height: 1, background: 'var(--color-mist)', margin: '16px 0' }} />
+          {venc.isLoading && <Skeleton h={48} />}
+          {venc.data && venc.data.length === 0 && <EmptyState>Sin vencimientos próximos.</EmptyState>}
+          {venc.data?.map((v) => {
+            const dias = daysUntil(v.next_closing)
+            return (
+              <div key={v.account_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>{v.account_name}</span><br />
+                  {dias !== null && dias >= 0 && dias <= 5
+                    ? <AlertPill>cierra en {dias} días</AlertPill>
+                    : <span style={{ fontSize: 11, color: 'var(--color-sage)' }}>{formatDue(v.next_due)}</span>}
+                </span>
+                <span style={{ fontSize: 15, fontWeight: 500 }}>{formatMoney(cicloTotal(v.ciclo_cerrado))}</span>
+              </div>
+            )
+          })}
+        </Card>
+      </div>
+      <section style={{ padding: '20px 18px 8px' }}>
+        <div className="cap" style={{ marginBottom: 12 }}>Gastos por categoría</div>
+        {data.por_categoria.length === 0
+          ? <EmptyState>Todavía no cargaste gastos este mes — escribile al bot o tocá +.</EmptyState>
+          : data.por_categoria.slice(0, 6).map((c) => <CategoryBar key={c.cat} label={c.cat} total={c.total} max={maxCat} />)}
+      </section>
+      {formatUsdApprox(data.patrimonio_ars, data.blue) && (
+        <div style={{ padding: '0 18px', fontSize: 12, color: 'var(--color-sage)' }}>Patrimonio {formatUsdApprox(data.patrimonio_ars, data.blue)} · blue {formatMoney(data.blue)}</div>
+      )}
+    </div>
+  )
 }
+function cicloTotal(arr?: CicloTotal[]): number { return (arr ?? []).reduce((s, c) => s + c.total, 0) }
+function daysUntil(dateStr?: string): number | null { if (!dateStr) return null; return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000) }
+function formatDue(due?: string): string { return due ? `vence ${due.slice(8, 10)}/${due.slice(5, 7)}` : 'sin fecha' }

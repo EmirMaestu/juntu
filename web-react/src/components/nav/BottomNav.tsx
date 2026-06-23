@@ -3,19 +3,18 @@ import { NAV_ITEMS } from './navItems'
 
 export default function BottomNav({ onAdd }: { onAdd: () => void }) {
   return (
-    <nav style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-around',
-      padding: '12px 14px 18px', borderTop: '1px solid var(--color-mist)',
-    }}>
-      {NAV_ITEMS.slice(0, 2).map((i) => <Item key={i.to} {...i} />)}
-      <button onClick={onAdd} aria-label="Agregar"
-        style={{
-          width: 52, height: 52, borderRadius: '50%', background: 'var(--color-voltage)',
-          border: 'none', boxShadow: 'var(--shadow-cta)', marginTop: -26, cursor: 'pointer',
-        }}>
-        <i className="ti ti-plus" style={{ fontSize: 26, color: 'var(--voltage-on-dark)' }} aria-hidden />
-      </button>
-      {NAV_ITEMS.slice(2).map((i) => <Item key={i.to} {...i} />)}
+    <nav style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 40, background: 'var(--color-linen)', borderTop: '1px solid var(--color-mist)' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-around', padding: '12px 14px 18px' }}>
+        {NAV_ITEMS.slice(0, 2).map((i) => <Item key={i.to} {...i} />)}
+        <button onClick={onAdd} aria-label="Agregar"
+          style={{
+            width: 52, height: 52, borderRadius: '50%', background: 'var(--color-voltage)',
+            border: 'none', boxShadow: 'var(--shadow-cta)', marginTop: -26, cursor: 'pointer',
+          }}>
+          <i className="ti ti-plus" style={{ fontSize: 26, color: 'var(--voltage-on-dark)' }} aria-hidden />
+        </button>
+        {NAV_ITEMS.slice(2).map((i) => <Item key={i.to} {...i} />)}
+      </div>
     </nav>
   )
 }

@@ -20,7 +20,7 @@ export default function AppLayout({ children }: { children?: ReactNode }) {
 
   if (isDesktop) {
     return (
-      <div style={{ display: 'flex', maxWidth: 1100, margin: '0 auto', minHeight: '100%' }}>
+      <div style={{ display: 'flex', maxWidth: 1100, margin: '0 auto', minHeight: '100vh' }}>
         <Sidebar onAdd={() => setAddOpen(true)} />
         <main style={{ flex: 1, padding: 24 }}>{children ?? <Outlet />}</main>
         {addOpen && <QuickAddSheet onClose={() => setAddOpen(false)} />}
@@ -28,9 +28,11 @@ export default function AppLayout({ children }: { children?: ReactNode }) {
     )
   }
   return (
-    <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column', maxWidth: 480, margin: '0 auto' }}>
-      <TopBar onMenu={() => setMenuOpen(true)} />
-      <main style={{ flex: 1 }}>{children ?? <Outlet />}</main>
+    <div style={{ maxWidth: 480, margin: '0 auto', minHeight: '100vh' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 30, background: 'var(--color-linen)' }}>
+        <TopBar onMenu={() => setMenuOpen(true)} />
+      </div>
+      <main style={{ paddingBottom: 96 }}>{children ?? <Outlet />}</main>
       <BottomNav onAdd={() => setAddOpen(true)} />
       <MenuDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />
       {addOpen && <QuickAddSheet onClose={() => setAddOpen(false)} />}

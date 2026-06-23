@@ -6,6 +6,7 @@ import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
+import CardActions from '../components/ui/CardActions'
 
 interface CatForm { name: string }
 
@@ -52,16 +53,22 @@ export default function Categorias() {
       {!data || data.length === 0 ? <EmptyState>Sin categorías.</EmptyState> : (
         <Card>
           {data.map((c) => (
-            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--color-mist)' }}>
-              <span style={{ fontSize: 14 }}>{c.name}</span>
-              <div style={{ display: 'flex', gap: 4 }}>
-                <button aria-label={`Editar ${c.name}`} onClick={() => setEditCat(c)} style={iconBtn}>
-                  <i className="ti ti-edit" aria-hidden />
-                </button>
-                <button aria-label={`Borrar ${c.name}`} onClick={() => setDeleteCat(c)} style={iconBtn}>
-                  <i className="ti ti-trash" aria-hidden />
-                </button>
-              </div>
+            <div
+              key={c.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '10px 0',
+                borderBottom: '1px solid var(--color-mist)',
+              }}
+            >
+              {/* Name left, actions right */}
+              <span style={{ fontSize: 14, flex: 1 }}>{c.name}</span>
+              <CardActions
+                onEdit={() => setEditCat(c)}
+                onDelete={() => setDeleteCat(c)}
+              />
             </div>
           ))}
         </Card>
@@ -102,7 +109,29 @@ export default function Categorias() {
   )
 }
 
-const iconBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-sage)', fontSize: 16, padding: 2 }
-const ghostBtn: React.CSSProperties = { background: 'transparent', border: '1px solid var(--color-mist)', borderRadius: 10, padding: '7px 14px', fontSize: 13, cursor: 'pointer' }
-const ctaBtn: React.CSSProperties = { background: 'var(--color-voltage)', color: 'var(--voltage-on-dark)', border: 'none', borderRadius: 10, padding: '14px', fontWeight: 500, cursor: 'pointer' }
-const inputStyle: React.CSSProperties = { border: '1px solid var(--color-mist)', borderRadius: 10, padding: '10px 12px', fontSize: 14, background: 'var(--color-linen)', width: '100%', boxSizing: 'border-box' }
+const ghostBtn: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid var(--color-mist)',
+  borderRadius: 10,
+  padding: '7px 14px',
+  fontSize: 13,
+  cursor: 'pointer',
+}
+const ctaBtn: React.CSSProperties = {
+  background: 'var(--color-voltage)',
+  color: 'var(--voltage-on-dark)',
+  border: 'none',
+  borderRadius: 10,
+  padding: '14px',
+  fontWeight: 500,
+  cursor: 'pointer',
+}
+const inputStyle: React.CSSProperties = {
+  border: '1px solid var(--color-mist)',
+  borderRadius: 10,
+  padding: '10px 12px',
+  fontSize: 14,
+  background: 'var(--color-linen)',
+  width: '100%',
+  boxSizing: 'border-box',
+}

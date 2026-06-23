@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
-export default function Card({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {
+export default function Card({ children, style, onClick }: { children: ReactNode; style?: React.CSSProperties; onClick?: () => void }) {
   return (
-    <div style={{ border: '1px solid var(--color-mist)', borderRadius: 'var(--radius-card)', padding: 18, ...style }}>
+    <div style={{ border: '1px solid var(--color-mist)', borderRadius: 'var(--radius-card)', padding: 18, ...style }} onClick={onClick}>
       {children}
     </div>
   )

@@ -4,6 +4,7 @@ import Login from './routes/Login'
 import Inicio from './routes/Inicio'
 import Movimientos from './routes/Movimientos'
 import Tarjetas from './routes/Tarjetas'
+import TarjetaDetalle from './routes/TarjetaDetalle'
 import Cuentas from './routes/Cuentas'
 import Categorias from './routes/Categorias'
 import Perfil from './routes/Perfil'
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/" element={<Inicio />} />
         <Route path="/movimientos" element={<Movimientos />} />
         <Route path="/tarjetas" element={<Tarjetas />} />
+        <Route path="/tarjetas/:id" element={<TarjetaDetalle />} />
         <Route path="/cuentas" element={<Cuentas />} />
         <Route path="/categorias" element={<Categorias />} />
         <Route path="/perfil" element={<Perfil />} />

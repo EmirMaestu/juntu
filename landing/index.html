@@ -1319,15 +1319,23 @@
       display: flex; align-items: center; justify-content: center;
       padding: 0 clamp(24px, 7vw, 120px); text-align: center;
     }
-    /* "otro verde" — deeper than the voltage manifesto; full rect by default (no-JS fallback) */
+    /* "otro verde" — deep emerald, distinct from the voltage manifesto; full rect by default (no-JS fallback) */
     #punta-fill {
-      position: absolute; inset: 0; background: #12a23c;
+      position: absolute; inset: 0; background: #0c5c34;
       clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%); will-change: clip-path;
     }
     #punta-content { position: relative; z-index: 1; }
-    .punta-label { color: #073d18; }
+    .punta-label { color: #7fd1a0; }
     .punta-h2 { font-family: 'Fraunces', serif; font-weight: 300; letter-spacing: -0.03em;
-      line-height: 1.0; font-size: clamp(40px, 7.5vw, 104px); color: #052a10; margin-top: 14px; }
+      line-height: 1.0; font-size: clamp(40px, 7.5vw, 104px); color: #f3fff8; margin-top: 14px; }
+    /* logo mark + tagline + CTA after the headline */
+    .punta-mark { margin-top: clamp(28px, 4vw, 48px); }
+    .punta-mark svg { width: clamp(80px, 10vw, 116px); height: auto; }
+    .punta-tag { font-family: 'Fraunces', serif; font-style: italic; font-weight: 300;
+      font-size: clamp(18px, 2.4vw, 28px); color: #d7f5e3; margin-top: 14px; }
+    .punta-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: clamp(24px, 3.5vw, 40px);
+      background: var(--canvas); color: var(--v-text); text-decoration: none; font-weight: 500;
+      font-size: 15px; padding: 13px 26px; border-radius: 999px; }
   </style>
 </head>
 
@@ -1873,6 +1881,14 @@
       <div id="punta-content">
         <p class="section-label punta-label">La idea</p>
         <h2 class="punta-h2">Menos apps.<br>Más presente.</h2>
+        <div class="punta-mark" aria-hidden="true">
+          <svg viewBox="0 0 120 64" role="img" aria-label="Yumi">
+            <circle id="pm-c1" cx="50" cy="32" r="24" fill="#0f2b1c"/>
+            <circle id="pm-c2" cx="70" cy="32" r="24" fill="#2bee4b"/>
+          </svg>
+        </div>
+        <div class="punta-tag">de a dos.</div>
+        <a href="/app/" class="punta-cta">Empezar gratis <span class="arr">→</span></a>
       </div>
     </div>
   </section>
@@ -2233,7 +2249,7 @@
     var puntaFill = document.getElementById('punta-fill');
     var puntaContent = document.getElementById('punta-content');
     if (puntaFill) {
-      gsap.set(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 55% 40%, 45% 40%)' });
+      gsap.set(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 50% 38%, 50% 38%)' });
       gsap.set(puntaContent, { opacity: 0, y: 36 });
       var puntaTl = gsap.timeline({
         scrollTrigger: {
@@ -2243,6 +2259,14 @@
       });
       puntaTl.to(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', ease: 'power1.inOut', duration: 0.7 }, 0);
       puntaTl.to(puntaContent, { opacity: 1, y: 0, ease: 'power3.out', duration: 0.3 }, 0.58);
+
+      // logo mark "breathes" — the two circles drift apart and together ("de a dos")
+      var pmc1 = document.getElementById('pm-c1');
+      var pmc2 = document.getElementById('pm-c2');
+      if (pmc1 && pmc2) {
+        gsap.to(pmc1, { attr: { cx: 45 }, duration: 2.6, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+        gsap.to(pmc2, { attr: { cx: 75 }, duration: 2.6, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+      }
     }
 
     /* ── Feature cards stagger reveal ─────────────────────────── */

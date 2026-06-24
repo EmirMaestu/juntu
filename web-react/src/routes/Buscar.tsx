@@ -107,7 +107,11 @@ export default function Buscar() {
   const { data: recordatorios } = useRecordatorios(true)
   const { data: transactions } = useQuery({
     queryKey: ['transactions', 'buscar'],
-    queryFn: () => apiGet<Transaction[]>('/api/transactions?limit=500'),
+    // /api/transactions returns { items, total } — unwrap to an array
+    queryFn: async () => {
+      const res = await apiGet<{ items: Transaction[] }>('/api/transactions?limit=500')
+      return res.items ?? []
+    },
   })
 
   // filter
@@ -125,7 +129,7 @@ export default function Buscar() {
     ? (recordatorios ?? []).filter((r) => matches(q, r.text))
     : []
   const filteredTx = q
-    ? (transactions ?? []).filter((t) => matches(q, t.description, t.category_name, t.acc_name))
+    ? (transactions ?? []).filter((t) => matches(q, t.description, t.cat_name, t.acc_name))
     : []
 
   const total = filteredTareas.length + filteredNotas.length + filteredEventos.length + filteredRecs.length + filteredTx.length

@@ -19,14 +19,22 @@ function fmtTime(iso: string) {
   return new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit' }).format(d)
 }
 
+// Local-time day key (YYYY-MM-DD). Using toISOString() here would convert to UTC
+// and bucket evening events (e.g. 21:00 in UTC-3 Argentina) into the next day.
+function localDay(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function fmtDateLabel(iso: string): string {
   const d = new Date(iso)
   const today = new Date()
   const tomorrow = new Date(today)
   tomorrow.setDate(today.getDate() + 1)
-  const isoDay = (x: Date) => x.toISOString().slice(0, 10)
-  if (isoDay(d) === isoDay(today)) return 'Hoy'
-  if (isoDay(d) === isoDay(tomorrow)) return 'Mañana'
+  if (localDay(d) === localDay(today)) return 'Hoy'
+  if (localDay(d) === localDay(tomorrow)) return 'Mañana'
   return new Intl.DateTimeFormat('es-AR', {
     weekday: 'long',
     day: 'numeric',
@@ -35,7 +43,7 @@ function fmtDateLabel(iso: string): string {
 }
 
 function dayKey(iso: string) {
-  return new Date(iso).toISOString().slice(0, 10)
+  return localDay(new Date(iso))
 }
 
 function isPast(iso: string) {

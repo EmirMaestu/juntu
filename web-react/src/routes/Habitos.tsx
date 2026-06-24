@@ -208,7 +208,7 @@ export default function Habitos() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>{r.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--color-sage)', marginTop: 2 }}>
-                    {r.cnt} vez{r.cnt === 1 ? '' : 'es'}
+                    {r.cnt} {r.cnt === 1 ? 'vez' : 'veces'}
                     {r.total > 0 && r.unit ? ` · ${r.total} ${r.unit}` : ''}
                   </div>
                 </div>

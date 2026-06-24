@@ -6,6 +6,28 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-24
+Yumi deja de ser solo finanzas: llega **el asistente**. Se suman las 6 secciones del bot a la app y un **Home "Hoy"** que unifica el día.
+
+### Added
+- **Home "Hoy"** (nueva pantalla de inicio): tu día (eventos, recordatorios, tareas y recurrentes que tocan hoy), resumen de plata (gastado / a pagar / disponible) y tareas pendientes.
+- **Agenda**: eventos + recordatorios unificados, agrupados por día (Hoy / Mañana / fecha), con alta/edición/borrado y *posponer* recordatorios.
+- **Tareas**: pendientes ordenadas por prioridad, completar/reabrir, editar y borrar.
+- **Listas compartidas**: súper/farmacia/etc., ítems con cantidad, check, limpiar comprados y plantillas.
+- **Hábitos**: registro diario, grilla de últimos 7 días y resumen.
+- **Notas**: con tags y búsqueda.
+- **Búsqueda global**: busca en tareas, notas, eventos, recordatorios y movimientos, agrupado por tipo.
+- Botón **+** multi-tipo: cargar gasto, tarea, nota, evento o recordatorio desde un solo lugar.
+
+### Changed
+- **Navegación reorganizada** de "finanzas" a "asistente": bottom nav (Hoy · Finanzas · + · Agenda · Tareas), sidebar agrupado (Asistente / Finanzas) y buscador en la barra superior.
+- El inicio financiero se movió a `/finanzas`; `/` ahora es el Home "Hoy".
+
+### Fixed
+- Agenda agrupaba por día en UTC: eventos de la noche (≥21:00 en Argentina) caían en "Mañana". Ahora usa hora local.
+- La búsqueda global crasheaba al tipear (el endpoint de movimientos devuelve `{ items }`, no un array).
+- Hábitos mostraba "vezes" → "veces".
+
 ## [0.1.0] - 2026-06-24
 Base: el **asistente de finanzas de la pareja** (la cuña), web + landing, con marca Yumi.
 

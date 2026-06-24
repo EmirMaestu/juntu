@@ -331,7 +331,7 @@
     }
     #conv-sticky {
       position: relative;
-      min-height: 100vh;
+      min-height: clamp(520px, 78vh, 720px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -805,7 +805,7 @@
     #words-stack {
       display: flex;
       flex-direction: column;
-      gap: clamp(20px, 3vw, 36px);
+      gap: clamp(40px, 7vw, 88px);
       max-width: 760px;
       width: 100%;
     }
@@ -1312,19 +1312,22 @@
     }
     .mf-line.mf-accent { font-style: italic; }
 
-    /* ── Punta: green wedge dropping into a dark section ──────────── */
-    #punta { background: #1b201c; position: relative; z-index: 1; overflow: hidden;
-      padding: clamp(150px, 22vw, 300px) 0 clamp(56px, 8vw, 110px); text-align: center; }
-    #punta-shape {
-      position: absolute; top: 0; left: 50%;
-      width: clamp(240px, 38vw, 540px); height: clamp(160px, 26vw, 360px);
-      background: var(--voltage); clip-path: polygon(0 0, 100% 0, 50% 100%);
-      transform: translateX(-50%); transform-origin: top center; will-change: transform;
+    /* ── Punta: green wedge that grows to fill the screen on scroll ──── */
+    #punta { background: #1b201c; position: relative; z-index: 1; }
+    #punta-sticky {
+      min-height: 100vh; position: relative; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 clamp(24px, 7vw, 120px); text-align: center;
+    }
+    /* "otro verde" — deeper than the voltage manifesto; full rect by default (no-JS fallback) */
+    #punta-fill {
+      position: absolute; inset: 0; background: #12a23c;
+      clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%); will-change: clip-path;
     }
     #punta-content { position: relative; z-index: 1; }
-    .punta-label { color: var(--voltage); }
+    .punta-label { color: #073d18; }
     .punta-h2 { font-family: 'Fraunces', serif; font-weight: 300; letter-spacing: -0.03em;
-      line-height: 1.02; font-size: clamp(36px, 6.5vw, 84px); color: #eef3ee; margin-top: 14px; }
+      line-height: 1.0; font-size: clamp(40px, 7.5vw, 104px); color: #052a10; margin-top: 14px; }
   </style>
 </head>
 
@@ -1863,12 +1866,14 @@
     </div>
   </section>
 
-  <!-- ═══ PUNTA (full-color triangle wedge, NewForm style) ═════════ -->
-  <section id="punta" aria-label="Menos apps, más ustedes">
-    <div id="punta-shape" aria-hidden="true"></div>
-    <div id="punta-content">
-      <p class="section-label punta-label">La idea</p>
-      <h2 class="punta-h2">Menos apps.<br>Más ustedes.</h2>
+  <!-- ═══ PUNTA (green wedge grows to fill the screen → green section) ═══ -->
+  <section id="punta" aria-label="Menos apps, más presente">
+    <div id="punta-sticky">
+      <div id="punta-fill" aria-hidden="true"></div>
+      <div id="punta-content">
+        <p class="section-label punta-label">La idea</p>
+        <h2 class="punta-h2">Menos apps.<br>Más presente.</h2>
+      </div>
     </div>
   </section>
 
@@ -2152,14 +2157,13 @@
     gsap.set(convHead, { opacity: 1, scale: 1 });
     gsap.set(convBgLayer, { opacity: 1 });
 
+    // NO pin → no empty viewport. Cards converge as the section scrolls through.
     var convTl = gsap.timeline({
       scrollTrigger: {
         trigger: convSection,
-        start: 'top top',
-        end: '+=45%',
-        pin: convSticky,
-        scrub: 1.2,
-        anticipatePin: 1
+        start: 'top 75%',
+        end: 'bottom 35%',
+        scrub: 1.2
       }
     });
 
@@ -2225,14 +2229,20 @@
       });
     }
 
-    /* ── Punta wedge: centre + grow ("forms") as the section scrolls in ── */
-    var puntaShape = document.getElementById('punta-shape');
-    if (puntaShape) {
-      gsap.set(puntaShape, { xPercent: -50, scaleY: 0.18, transformOrigin: 'top center' });
-      gsap.to(puntaShape, {
-        scaleY: 1, ease: 'none',
-        scrollTrigger: { trigger: '#punta', start: 'top bottom', end: 'top 25%', scrub: 1 }
+    /* ── Punta: green triangle grows to fill the whole screen, then text in ── */
+    var puntaFill = document.getElementById('punta-fill');
+    var puntaContent = document.getElementById('punta-content');
+    if (puntaFill) {
+      gsap.set(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 55% 40%, 45% 40%)' });
+      gsap.set(puntaContent, { opacity: 0, y: 36 });
+      var puntaTl = gsap.timeline({
+        scrollTrigger: {
+          trigger: '#punta', start: 'top top', end: '+=90%',
+          pin: '#punta-sticky', scrub: 1, anticipatePin: 1
+        }
       });
+      puntaTl.to(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', ease: 'power1.inOut', duration: 0.7 }, 0);
+      puntaTl.to(puntaContent, { opacity: 1, y: 0, ease: 'power3.out', duration: 0.3 }, 0.58);
     }
 
     /* ── Feature cards stagger reveal ─────────────────────────── */

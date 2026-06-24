@@ -9,6 +9,10 @@ import Cuentas from './routes/Cuentas'
 import Categorias from './routes/Categorias'
 import Perfil from './routes/Perfil'
 import Recurrentes from './routes/Recurrentes'
+import Tareas from './routes/Tareas'
+import Notas from './routes/Notas'
+import Habitos from './routes/Habitos'
+import Listas from './routes/Listas'
 
 export default function App() {
   return (
@@ -23,6 +27,10 @@ export default function App() {
         <Route path="/categorias" element={<Categorias />} />
         <Route path="/perfil" element={<Perfil />} />
         <Route path="/recurrentes" element={<Recurrentes />} />
+        <Route path="/tareas" element={<Tareas />} />
+        <Route path="/notas" element={<Notas />} />
+        <Route path="/habitos" element={<Habitos />} />
+        <Route path="/listas" element={<Listas />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

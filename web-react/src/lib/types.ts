@@ -98,3 +98,77 @@ export interface VencimientoCard {
   ciclo_abierto: CicloTotal[]
   error?: string
 }
+
+// ---- Assistant section types ----
+
+export interface Tarea {
+  id: number
+  text: string
+  priority: 'alta' | 'media' | 'baja'
+  due_at?: string | null
+  user_id: number
+  created_at: string
+  status: 'pendiente' | 'hecha'
+  completed_at?: string | null
+  shared?: number
+}
+
+export interface Nota {
+  id: number
+  text: string
+  tags: string[]
+  user_id: number
+  created_at: string
+  shared?: number
+}
+
+export interface HabitoLog {
+  id: number
+  name: string
+  value?: number | null
+  unit?: string | null
+  note?: string | null
+  logged_at: string
+  user_id: number
+}
+
+export interface HabitoResumen {
+  name: string
+  cnt: number
+  total: number
+  unit?: string | null
+}
+
+export interface HabitosResponse {
+  items: HabitoLog[]
+  resumen: HabitoResumen[]
+  days: number
+}
+
+export interface ListaItem {
+  id: number
+  text: string
+  done: number
+  qty?: number | null
+  unit?: string | null
+  category?: string | null
+}
+
+export interface Lista {
+  id: number
+  name: string
+  icon?: string | null
+  kind?: string | null
+  target_date?: string | null
+  recurrence?: string | null
+  items: ListaItem[]
+  pend: number
+  total: number
+}
+
+export interface ListaTemplate {
+  id: number
+  name: string
+  icon?: string | null
+  total: number
+}

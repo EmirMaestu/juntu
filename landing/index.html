@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%23fafffa'/%3E%3Ccircle%20cx='26'%20cy='33'%20r='14'%20fill='%23121613'/%3E%3Ccircle%20cx='39'%20cy='33'%20r='14'%20fill='%232bee4b'/%3E%3C/svg%3E" />
   <title>Yumi · El asistente de los dos</title>
   <meta name="description" content="Yumi se ocupa de la plata, la agenda, las tareas, las listas y los hábitos de tu pareja o familia. Le hablás por chat —WhatsApp o Telegram— y listo." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1293,6 +1294,15 @@
     .blob-2 { width: 52vw; height: 52vw; max-width: 560px; max-height: 560px;
       background: radial-gradient(circle, rgba(71,126,233,0.32), rgba(71,126,233,0) 70%);
       top: 120vh; left: -14vw; }
+    /* Trailing circular cursor (white, follows with lag; visible everywhere via blend) */
+    #cursor {
+      position: fixed; top: 0; left: 0; width: 30px; height: 30px; border-radius: 50%;
+      border: 1.5px solid #ffffff; background: rgba(255,255,255,0.12);
+      pointer-events: none; z-index: 9998; transform: translate(-50%, -50%);
+      mix-blend-mode: difference; will-change: transform; opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+    @media (hover: none), (pointer: coarse) { #cursor { display: none; } }
     .blob-3 { width: 40vw; height: 40vw; max-width: 460px; max-height: 460px;
       background: radial-gradient(circle, rgba(200,210,200,0.6), rgba(200,210,200,0) 70%);
       top: 260vh; right: -10vw; }
@@ -1319,22 +1329,22 @@
       display: flex; align-items: center; justify-content: center;
       padding: 0 clamp(24px, 7vw, 120px); text-align: center;
     }
-    /* "otro verde" — deep emerald, distinct from the voltage manifesto; full rect by default (no-JS fallback) */
+    /* brand voltage green; full rect by default (no-JS fallback) */
     #punta-fill {
-      position: absolute; inset: 0; background: #0c5c34;
+      position: absolute; inset: 0; background: var(--voltage);
       clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%); will-change: clip-path;
     }
     #punta-content { position: relative; z-index: 1; }
-    .punta-label { color: #7fd1a0; }
+    .punta-label { color: var(--v-text); opacity: 0.7; }
     .punta-h2 { font-family: 'Fraunces', serif; font-weight: 300; letter-spacing: -0.03em;
-      line-height: 1.0; font-size: clamp(40px, 7.5vw, 104px); color: #f3fff8; margin-top: 14px; }
+      line-height: 1.0; font-size: clamp(40px, 7.5vw, 104px); color: var(--v-text); margin-top: 14px; }
     /* logo mark + tagline + CTA after the headline */
     .punta-mark { margin-top: clamp(28px, 4vw, 48px); }
     .punta-mark svg { width: clamp(80px, 10vw, 116px); height: auto; }
     .punta-tag { font-family: 'Fraunces', serif; font-style: italic; font-weight: 300;
-      font-size: clamp(18px, 2.4vw, 28px); color: #d7f5e3; margin-top: 14px; }
+      font-size: clamp(18px, 2.4vw, 28px); color: var(--v-text); opacity: 0.8; margin-top: 14px; }
     .punta-cta { display: inline-flex; align-items: center; gap: 8px; margin-top: clamp(24px, 3.5vw, 40px);
-      background: var(--canvas); color: var(--v-text); text-decoration: none; font-weight: 500;
+      background: var(--obsidian); color: var(--canvas); text-decoration: none; font-weight: 500;
       font-size: 15px; padding: 13px 26px; border-radius: 999px; }
   </style>
 </head>
@@ -1344,6 +1354,9 @@
   <div class="blob blob-1" aria-hidden="true"></div>
   <div class="blob blob-2" aria-hidden="true"></div>
   <div class="blob blob-3" aria-hidden="true"></div>
+
+  <!-- Trailing circular cursor -->
+  <div id="cursor" aria-hidden="true"></div>
 
   <!-- Progress bar -->
   <div id="progress-bar"></div>
@@ -1883,8 +1896,8 @@
         <h2 class="punta-h2">Menos apps.<br>Más presente.</h2>
         <div class="punta-mark" aria-hidden="true">
           <svg viewBox="0 0 120 64" role="img" aria-label="Yumi">
-            <circle id="pm-c1" cx="50" cy="32" r="24" fill="#0f2b1c"/>
-            <circle id="pm-c2" cx="70" cy="32" r="24" fill="#2bee4b"/>
+            <circle id="pm-c1" cx="50" cy="32" r="24" fill="#121613"/>
+            <circle id="pm-c2" cx="70" cy="32" r="24" fill="#fafffa"/>
           </svg>
         </div>
         <div class="punta-tag">de a dos.</div>
@@ -2107,6 +2120,20 @@
       gsap.ticker.lagSmoothing(0);
     }
 
+    /* ── Trailing circular cursor (follows the mouse with a slight lag) ── */
+    var cursorEl = document.getElementById('cursor');
+    if (cursorEl && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      var curX = window.innerWidth / 2, curY = window.innerHeight / 2, tgX = curX, tgY = curY;
+      window.addEventListener('mousemove', function(e) {
+        tgX = e.clientX; tgY = e.clientY; cursorEl.style.opacity = '1';
+      }, { passive: true });
+      (function cursorLoop() {
+        curX += (tgX - curX) * 0.16; curY += (tgY - curY) * 0.16;
+        cursorEl.style.transform = 'translate(' + curX + 'px,' + curY + 'px) translate(-50%,-50%)';
+        requestAnimationFrame(cursorLoop);
+      })();
+    }
+
     /* ── Hero reveals ──────────────────────────────────────────── */
     var heroEls = document.querySelectorAll('#hero .js-hide');
     gsap.fromTo(heroEls,
@@ -2260,12 +2287,13 @@
       puntaTl.to(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', ease: 'power1.inOut', duration: 0.7 }, 0);
       puntaTl.to(puntaContent, { opacity: 1, y: 0, ease: 'power3.out', duration: 0.3 }, 0.58);
 
-      // logo mark "breathes" — the two circles drift apart and together ("de a dos")
+      // logo mark: the two circles swap colours constantly ("de a dos")
       var pmc1 = document.getElementById('pm-c1');
       var pmc2 = document.getElementById('pm-c2');
       if (pmc1 && pmc2) {
-        gsap.to(pmc1, { attr: { cx: 45 }, duration: 2.6, repeat: -1, yoyo: true, ease: 'sine.inOut' });
-        gsap.to(pmc2, { attr: { cx: 75 }, duration: 2.6, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+        var swapTl = gsap.timeline({ repeat: -1, yoyo: true, repeatDelay: 0.5 });
+        swapTl.to(pmc1, { fill: '#fafffa', duration: 0.7, ease: 'power2.inOut' }, 0)
+              .to(pmc2, { fill: '#121613', duration: 0.7, ease: 'power2.inOut' }, 0);
       }
     }
 

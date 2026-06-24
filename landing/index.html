@@ -1282,10 +1282,31 @@
       /* Hide ALL floating cards on small phones to reclaim space */
       .float-cards { display: none; }
     }
+    /* ── Ambient parallax blobs (organic background movement) ────── */
+    .blob {
+      position: fixed; border-radius: 50%; filter: blur(70px);
+      opacity: 0.4; z-index: 0; pointer-events: none; will-change: transform;
+    }
+    .blob-1 { width: 42vw; height: 42vw; max-width: 480px; max-height: 480px;
+      background: radial-gradient(circle, rgba(43,238,75,0.55), rgba(43,238,75,0) 70%);
+      top: -6vw; right: -8vw; }
+    .blob-2 { width: 52vw; height: 52vw; max-width: 560px; max-height: 560px;
+      background: radial-gradient(circle, rgba(71,126,233,0.32), rgba(71,126,233,0) 70%);
+      top: 120vh; left: -14vw; }
+    .blob-3 { width: 40vw; height: 40vw; max-width: 460px; max-height: 460px;
+      background: radial-gradient(circle, rgba(200,210,200,0.6), rgba(200,210,200,0) 70%);
+      top: 260vh; right: -10vw; }
+    /* keep all real content above the blobs */
+    #topbar, #pill-nav, #progress-bar, main, section, footer, .hero-inner { position: relative; z-index: 1; }
   </style>
 </head>
 
 <body>
+  <!-- Ambient parallax blobs -->
+  <div class="blob blob-1" aria-hidden="true"></div>
+  <div class="blob blob-2" aria-hidden="true"></div>
+  <div class="blob blob-3" aria-hidden="true"></div>
+
   <!-- Progress bar -->
   <div id="progress-bar"></div>
 
@@ -1361,29 +1382,29 @@
       <div id="conv-bg-layer" aria-hidden="true">
         <!-- Scattered cards that converge -->
         <div class="conv-card" id="cc1" style="top:18%;left:6%;">
-          <div class="cc-label">Este mes</div>
+          <div class="cc-label">Gastado este mes</div>
           <div class="cc-val">$284.000</div>
-          <div class="cc-sub">Gastos compartidos</div>
+          <div class="cc-sub">Entre los dos</div>
         </div>
         <div class="conv-card voltage-card" id="cc2" style="top:12%;right:8%;">
-          <div class="cc-label">Cuotas activas</div>
-          <div class="cc-val">7</div>
-          <div class="cc-sub">Total: $1.890.000</div>
+          <div class="cc-label">Mañana 21:00</div>
+          <div class="cc-val">Cena</div>
+          <div class="cc-sub">Casa de mamá</div>
         </div>
         <div class="conv-card dark-card" id="cc3" style="top:55%;left:4%;">
-          <div class="cc-label">Dólar blue</div>
-          <div class="cc-val">$1.355</div>
-          <div class="cc-sub">Actualizado ahora</div>
+          <div class="cc-label">Lista del súper</div>
+          <div class="cc-val">3 de 7</div>
+          <div class="cc-sub">Leche, pan, huevos…</div>
         </div>
         <div class="conv-card" id="cc4" style="top:65%;right:6%;">
-          <div class="cc-label">Próximo vencimiento</div>
-          <div class="cc-val">28 jun</div>
-          <div class="cc-sub">BBVA — $42.000</div>
+          <div class="cc-label">Recordatorio</div>
+          <div class="cc-val">15:30</div>
+          <div class="cc-sub">Turno dentista</div>
         </div>
         <div class="conv-card voltage-card" id="cc5" style="top:35%;right:3%;">
-          <div class="cc-label">Deuda entre ustedes</div>
-          <div class="cc-val">$17.500</div>
-          <div class="cc-sub">Él → ella</div>
+          <div class="cc-label">Pendientes</div>
+          <div class="cc-val">4 tareas</div>
+          <div class="cc-sub">Llamar al plomero…</div>
         </div>
 
         <!-- Yumi Phone Mock (convergence end-state) -->
@@ -1520,7 +1541,7 @@
   </section>
 
   <!-- ═══ 3-WORD PIN ═══════════════════════════════════════════════ -->
-  <section id="words-pin" aria-label="Hablá, Compartí, Controlá">
+  <section id="words-pin" aria-label="Hablá, Compartí, Administrá">
     <div id="words-sticky">
       <div id="words-stack">
         <!-- Word row 1: Hablá (voltage green) -->
@@ -1544,8 +1565,8 @@
           </div>
           <div class="word-big c-comparte">Compartí.</div>
         </div>
-        <!-- Word row 3: Controlá (magenta/red) -->
-        <div class="word-row" id="ws-3" aria-label="Controlá">
+        <!-- Word row 3: Administrá (magenta/red) -->
+        <div class="word-row" id="ws-3" aria-label="Administrá">
           <div class="word-tile t-controla" aria-hidden="true">
             <!-- Bar chart icon -->
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1553,7 +1574,7 @@
               <line x1="2" y1="20" x2="22" y2="20"/>
             </svg>
           </div>
-          <div class="word-big c-controla">Controlá.</div>
+          <div class="word-big c-controla">Administrá.</div>
         </div>
       </div>
     </div>
@@ -2090,7 +2111,7 @@
       scrollTrigger: {
         trigger: convSection,
         start: 'top top',
-        end: '+=140%',
+        end: '+=100%',
         pin: convSticky,
         scrub: 1.2,
         anticipatePin: 1
@@ -2143,17 +2164,16 @@
       scrollTrigger: {
         trigger: wordPin,
         start: 'top top',
-        end: '+=150%',
+        end: '+=80%',
         pin: wordSticky,
         scrub: 1,
         anticipatePin: 1
       }
     });
 
-    // Compartí joins (stays), then Controlá joins (stays)
-    wordTl.to(wordRows[1], { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 0.18);
-    wordTl.to(wordRows[2], { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 0.58);
-    wordTl.to({}, { duration: 0.12 }, 1.0);
+    // Compartí joins (stays), then Administrá joins (stays)
+    wordTl.to(wordRows[1], { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 0.2);
+    wordTl.to(wordRows[2], { opacity: 1, y: 0, duration: 0.3, ease: 'power3.out' }, 0.6);
 
     /* ── Feature cards stagger reveal ─────────────────────────── */
     gsap.set('.feat-card', { opacity: 0, y: 44 });
@@ -2174,7 +2194,7 @@
     /* ── Section reveals (generic fade+slide) ──────────────────── */
     var revealEls = document.querySelectorAll(
       '#features h2, #features .section-label, ' +
-      '#capacidades h2, #capacidades .section-label, #capacidades .cap-row, ' +
+      '#capacidades h2, #capacidades .section-label, ' +
       '#chat-demo h2, #chat-demo .section-label, ' +
       '#privacidad .priv-visual, #privacidad .priv-copy, ' +
       '#precios h2, #precios .section-label, #precios .price-toggle, #precios .price-card, ' +
@@ -2285,6 +2305,45 @@
           if (val != null) el.textContent = val;
         });
       });
+    });
+
+    /* ── Ambient blob parallax (drift on scroll, distinct rates) ── */
+    [['.blob-1', 180], ['.blob-2', -220], ['.blob-3', 160]].forEach(function(pair) {
+      gsap.to(pair[0], {
+        y: pair[1], ease: 'none',
+        scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 2 }
+      });
+    });
+
+    /* ── Liquid skew: elements lean with scroll velocity, ease back ── */
+    var liquidSel = '.fcard, .feat-card, .price-card, .cap-row, .wa-chat, .ed-block, .priv-visual, #precios h2, #capacidades h2, #chat-demo h2';
+    if (document.querySelector(liquidSel)) {
+      var skewSetter = gsap.quickSetter(liquidSel, 'skewY', 'deg');
+      var liquid = { s: 0 };
+      var clampSkew = gsap.utils.clamp(-5, 5);
+      ScrollTrigger.create({
+        onUpdate: function(self) {
+          var sk = clampSkew(self.getVelocity() / -480);
+          if (Math.abs(sk) > Math.abs(liquid.s)) {
+            liquid.s = sk;
+            gsap.to(liquid, {
+              s: 0, duration: 0.8, ease: 'power3',
+              overwrite: true,
+              onUpdate: function() { skewSetter(liquid.s); }
+            });
+          }
+        }
+      });
+    }
+
+    /* ── Capacidades: slide in from the left, staggered ──────────── */
+    gsap.set('.cap-row', { opacity: 0, x: -48 });
+    ScrollTrigger.batch('.cap-row', {
+      onEnter: function(els) {
+        gsap.to(els, { opacity: 1, x: 0, duration: 0.8, stagger: 0.1, ease: 'power3.out' });
+      },
+      start: 'top 88%',
+      once: true
     });
 
     /* ── ScrollTrigger refresh ─────────────────────────────────── */

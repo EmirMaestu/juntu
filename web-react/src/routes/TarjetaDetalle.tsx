@@ -147,7 +147,7 @@ export default function TarjetaDetalle() {
   const account = accounts.data?.find((a) => a.id === accId) ?? null
   const venc = vencimientos.data?.find((v) => v.account_id === accId)
   const cuotas = (recurring.data ?? []).filter(
-    (r) => r.account_id === accId && r.total_installments,
+    (r) => r.account_id === accId,
   )
 
   if (!account) {
@@ -221,53 +221,89 @@ export default function TarjetaDetalle() {
         </div>
       </Card>
 
-      {/* Cuotas section */}
+      {/* Recurrentes y cuotas section */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-          <div className="cap" style={{ flex: 1 }}>Cuotas</div>
+          <div className="cap" style={{ flex: 1 }}>Recurrentes y cuotas</div>
           <button onClick={() => setAddCuotaOpen(true)} style={ghostBtn}>+ Agregar cuota</button>
         </div>
 
         {cuotas.length === 0
-          ? <EmptyState>Sin cuotas activas.</EmptyState>
+          ? <EmptyState>Sin recurrentes en esta tarjeta.</EmptyState>
           : cuotas.map((r) => {
-            const fired = r.installments_fired ?? 0
-            const total = r.total_installments ?? 0
-            const restante = r.amount * (total - fired)
             const isPaused = r.active === 0
-            return (
-              <Card
-                key={r.id}
-                style={{ marginBottom: 10, opacity: isPaused ? 0.55 : 1 }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500 }}>{r.description}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-sage)', marginTop: 2 }}>
-                      {fired}/{total} cuotas · {formatMoney(r.amount, r.currency)} c/u
+            if (r.total_installments) {
+              // Installment plan row
+              const fired = r.installments_fired ?? 0
+              const total = r.total_installments
+              const restante = r.amount * (total - fired)
+              return (
+                <Card
+                  key={r.id}
+                  style={{ marginBottom: 10, opacity: isPaused ? 0.55 : 1 }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{r.description}</div>
+                      <div style={{ fontSize: 12, color: 'var(--color-sage)', marginTop: 2 }}>
+                        {fired}/{total} cuotas · {formatMoney(r.amount, r.currency)} c/u
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <button
+                        onClick={() => update.mutate({ id: r.id, active: isPaused ? 1 : 0 })}
+                        style={pauseBtn}
+                      >
+                        {isPaused ? 'Reactivar' : 'Pausar'}
+                      </button>
+                      <CardActions
+                        onEdit={() => setEditCuota(r)}
+                        onDelete={() => setDeleteCuota(r)}
+                      />
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <button
-                      onClick={() =>
-                        update.mutate({ id: r.id, active: isPaused ? 1 : 0 })
-                      }
-                      style={pauseBtn}
-                    >
-                      {isPaused ? 'Reactivar' : 'Pausar'}
-                    </button>
-                    <CardActions
-                      onEdit={() => setEditCuota(r)}
-                      onDelete={() => setDeleteCuota(r)}
-                    />
+                  <div style={{ marginTop: 8, fontSize: 13 }}>
+                    Total restante:{' '}
+                    <span className="num-serif" style={{ fontSize: 16 }}>{formatMoney(restante, r.currency)}</span>
                   </div>
-                </div>
-                <div style={{ marginTop: 8, fontSize: 13 }}>
-                  Total restante:{' '}
-                  <span className="num-serif" style={{ fontSize: 16 }}>{formatMoney(restante, r.currency)}</span>
-                </div>
-              </Card>
-            )
+                </Card>
+              )
+            } else {
+              // Fixed monthly row
+              const fmtNext = r.next_occurrence
+                ? `${r.next_occurrence.slice(8, 10)}/${r.next_occurrence.slice(5, 7)}`
+                : '—'
+              return (
+                <Card
+                  key={r.id}
+                  style={{ marginBottom: 10, opacity: isPaused ? 0.55 : 1 }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{r.description}</div>
+                      <div style={{ fontSize: 12, color: 'var(--color-sage)', marginTop: 2 }}>
+                        fijo mensual · {formatMoney(r.amount, r.currency)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-sage)', marginTop: 4 }}>
+                        próxima: {fmtNext}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <button
+                        onClick={() => update.mutate({ id: r.id, active: isPaused ? 1 : 0 })}
+                        style={pauseBtn}
+                      >
+                        {isPaused ? 'Reactivar' : 'Pausar'}
+                      </button>
+                      <CardActions
+                        onEdit={() => setEditCuota(r)}
+                        onDelete={() => setDeleteCuota(r)}
+                      />
+                    </div>
+                  </div>
+                </Card>
+              )
+            }
           })
         }
       </div>

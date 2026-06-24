@@ -172,3 +172,21 @@ export interface ListaTemplate {
   icon?: string | null
   total: number
 }
+
+export interface Evento {
+  id: number
+  title: string
+  starts_at: string
+  location?: string | null
+  notes?: string | null
+  user_id: number
+}
+
+export interface Recordatorio {
+  id: number
+  text: string
+  remind_at: string
+  fired: number
+  source?: string | null
+  user_id: number
+}

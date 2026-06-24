@@ -13,6 +13,8 @@ import Tareas from './routes/Tareas'
 import Notas from './routes/Notas'
 import Habitos from './routes/Habitos'
 import Listas from './routes/Listas'
+import Agenda from './routes/Agenda'
+import Buscar from './routes/Buscar'
 
 export default function App() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
         <Route path="/notas" element={<Notas />} />
         <Route path="/habitos" element={<Habitos />} />
         <Route path="/listas" element={<Listas />} />
+        <Route path="/agenda" element={<Agenda />} />
+        <Route path="/buscar" element={<Buscar />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

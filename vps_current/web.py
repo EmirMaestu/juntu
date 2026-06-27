@@ -231,19 +231,45 @@ def resolve_scope_uid(scope_cookie, user):
 
 
 def user_filter(scope_cookie, user, alias="t"):
-    """Filtro de usuario. scope_uid None ("ambos") = MI HOGAR (no global)."""
+    """Visibilidad para TRANSACCIONES (privacidad por cuenta): propio + lo de cuentas
+    compartidas / dueños con share_all. Reemplaza el viejo filtro por user_id."""
+    import visibility
     uid = resolve_scope_uid(scope_cookie, user)
-    if uid is not None: return f"AND {alias}.user_id = ?", [uid]
-    m = _household_member_ids(user["id"]); ph = ",".join("?" for _ in m)
-    return f"AND {alias}.user_id IN ({ph})", list(m)
+    m = _household_member_ids(user["id"])
+    frag, params = visibility.where(user["id"], uid, m, alias=alias,
+                                    shared_expr=visibility.shared_expr_tx(alias))
+    return "AND " + frag, params
 
 
 def user_filter_eq(scope_cookie, user, col="user_id"):
-    """For simple WHERE col=? cases. scope_uid None ("ambos") = MI HOGAR."""
+    """Filtro de HOGAR sin privacidad. SOLO para entidades fuera de alcance (ej. hábitos).
+    Para entidades de privacidad usar vis_filter_item / vis_filter_recurring."""
     uid = resolve_scope_uid(scope_cookie, user)
     if uid is not None: return f"AND {col} = ?", [uid]
     m = _household_member_ids(user["id"]); ph = ",".join("?" for _ in m)
     return f"AND {col} IN ({ph})", list(m)
+
+
+def vis_filter_item(scope_cookie, user, alias=""):
+    """Visibilidad para ítems con columna `shared` (eventos/tareas/notas/recordatorios).
+    alias="" → columnas sin prefijo (FROM tabla sin alias); alias="r" → r.user_id / r.shared."""
+    import visibility
+    uid = resolve_scope_uid(scope_cookie, user)
+    m = _household_member_ids(user["id"])
+    se = visibility.shared_expr_item(alias) if alias else "shared=1"
+    frag, params = visibility.where(user["id"], uid, m, alias=alias, shared_expr=se)
+    return "AND " + frag, params
+
+
+def vis_filter_recurring(scope_cookie, user, alias=""):
+    """Visibilidad para recurrentes/cuotas (privacidad por cuenta, como las transacciones)."""
+    import visibility
+    uid = resolve_scope_uid(scope_cookie, user)
+    m = _household_member_ids(user["id"])
+    acc = (f"{alias}.account_id" if alias else "account_id")
+    se = f"{acc} IN (SELECT id FROM accounts WHERE shared=1)"
+    frag, params = visibility.where(user["id"], uid, m, alias=alias, shared_expr=se)
+    return "AND " + frag, params
 
 
 # ─── Login / Logout ───────────────────────────────────────────────────────

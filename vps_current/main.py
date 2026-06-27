@@ -3200,12 +3200,12 @@ def resolve_scope(scope_str, asker_id):
 def build_consulta_filter(filters, asker_id):
     f = filters or {}
     where = []; params = []
+    import visibility
     scope_uid, scope_label = resolve_scope(f.get("scope"), asker_id)
-    if scope_uid is not None:
-        where.append("t.user_id = ?"); params.append(scope_uid)
-    else:  # "compartido" = SOLO mi hogar (no global)
-        _m = household_member_ids(asker_id)
-        where.append(f"t.user_id IN ({','.join('?' for _ in _m)})"); params.extend(_m)
+    _m = household_member_ids(asker_id)
+    _vf, _vp = visibility.where(asker_id, scope_uid, _m, alias="t",
+                                shared_expr=visibility.shared_expr_tx("t"))
+    where.append(_vf); params.extend(_vp)
     if f.get("keyword"):
         kw = str(f["keyword"]).strip()
         where.append(
@@ -3259,13 +3259,13 @@ async def _eventos_query(update, filters, asker_id):
     df, dt = resolve_period(f.get("period"))
     date_from = f.get("date_from") or df
     date_to = f.get("date_to") or dt
+    import visibility
     scope_uid, scope_label = resolve_scope(f.get("scope"), asker_id)
     where = []; params = []
-    if scope_uid is not None:
-        where.append("user_id = ?"); params.append(scope_uid)
-    else:  # "compartido" = solo mi hogar
-        _m = household_member_ids(asker_id)
-        where.append(f"user_id IN ({','.join('?' for _ in _m)})"); params.extend(_m)
+    _m = household_member_ids(asker_id)
+    _vf, _vp = visibility.where(asker_id, scope_uid, _m, alias="eventos",
+                                shared_expr=visibility.shared_expr_item("eventos"))
+    where.append(_vf); params.extend(_vp)
     if date_from:
         where.append("starts_at >= ?"); params.append(date_from)
     else:
@@ -3314,15 +3314,14 @@ def _distinct_keyword_candidates(scope_uid, asker_id=None):
         for r in c.execute("SELECT name FROM categories").fetchall():
             if r["name"]:
                 cats.append(r["name"])
-        if scope_uid is not None:
-            rows = c.execute("SELECT DISTINCT description FROM transactions "
-                             "WHERE user_id=? AND description IS NOT NULL AND description<>''",
-                             (scope_uid,)).fetchall()
-        else:
-            _m = household_member_ids(asker_id) if asker_id else []
-            rows = c.execute(
-                f"SELECT DISTINCT description FROM transactions WHERE user_id IN ({','.join('?' for _ in _m)}) "
-                "AND description IS NOT NULL AND description<>''", _m).fetchall() if _m else []
+        import visibility
+        _m = household_member_ids(asker_id) if asker_id else []
+        _vf, _vp = visibility.where(asker_id if asker_id else scope_uid, scope_uid, _m, alias="t",
+                                    shared_expr=visibility.shared_expr_tx("t"))
+        rows = c.execute(
+            f"SELECT DISTINCT t.description FROM transactions t "
+            f"WHERE {_vf} AND t.description IS NOT NULL AND t.description<>''",
+            _vp).fetchall()
     for r in rows:
         for tok in str(r["description"]).split():
             tok = tok.strip(".,;:()«»\"'").lower()

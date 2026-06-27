@@ -367,6 +367,57 @@ def push_test(user=Depends(require_user)):
         raise HTTPException(500, f"push falló: {e}")
 
 
+# ─── Feed de calendario (.ics) ─────────────────────────────────────────────
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://asistente.emir-maestu.site").rstrip("/")
+
+
+def _cal_token_for(conn, user_id):
+    row = conn.execute("SELECT cal_token FROM users WHERE id=?", (user_id,)).fetchone()
+    tok = row["cal_token"] if row and row["cal_token"] else None
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        conn.execute("UPDATE users SET cal_token=? WHERE id=?", (tok, user_id))
+        conn.commit()
+    return tok
+
+
+@app.get("/api/cal/url")
+def cal_url(user=Depends(require_user)):
+    with db() as conn:
+        tok = _cal_token_for(conn, user["id"])
+    return {"url": f"{PUBLIC_BASE_URL}/api/cal/{tok}.ics"}
+
+
+@app.post("/api/cal/regenerate")
+def cal_regenerate(user=Depends(require_user)):
+    tok = secrets.token_urlsafe(24)
+    with db() as conn:
+        conn.execute("UPDATE users SET cal_token=? WHERE id=?", (tok, user["id"]))
+        conn.commit()
+    return {"url": f"{PUBLIC_BASE_URL}/api/cal/{tok}.ics"}
+
+
+@app.get("/api/cal/{token}.ics")
+def cal_feed(token: str):
+    import calfeed
+    with db() as conn:
+        u = conn.execute("SELECT id FROM users WHERE cal_token=? AND active=1", (token,)).fetchone()
+        if not u:
+            raise HTTPException(404, "No encontrado")
+        uid = u["id"]
+        desde = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        eventos = [dict(r) for r in conn.execute(
+            "SELECT id, title, starts_at, location, notes FROM eventos "
+            "WHERE user_id=? AND substr(starts_at,1,10) >= ? ORDER BY starts_at", (uid, desde)).fetchall()]
+        recs = [dict(r) for r in conn.execute(
+            "SELECT id, text, remind_at, recurrence FROM recordatorios "
+            "WHERE user_id=? AND substr(REPLACE(remind_at,' ','T'),1,10) >= ? ORDER BY remind_at",
+            (uid, desde)).fetchall()]
+    body = calfeed.build_ics(eventos, recs)
+    return Response(content=body, media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'inline; filename="yumi.ics"'})
+
+
 @app.get("/api/me")
 def api_me(user=Depends(require_user), scope: str = Cookie("mine")):
     members = set(_household_member_ids(user["id"]))  # solo mi hogar (aislamiento)

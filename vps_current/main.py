@@ -43,6 +43,7 @@ TIMEZONE = os.environ.get("TIMEZONE", "America/Argentina/Buenos_Aires")
 _allowed_raw = (os.environ.get("ALLOWED_USER_IDS", "").strip()
                 or os.environ.get("ALLOWED_USER_ID", "").strip())
 ALLOWED_USER_IDS = [int(x.strip()) for x in _allowed_raw.split(",") if x.strip()]
+APP_URL = os.environ.get("APP_URL", "https://asistente.emir-maestu.site/app").rstrip("/")
 
 DB_PATH = BASE_DIR / "data.db"
 
@@ -94,6 +95,113 @@ RATE_TTL = 900
 # # >>> photo cuotas v4
 # # >>> photo cuotas v5
 anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# ── Cost tracking (precios aprox. USD por 1M tokens) ──────────────────────────
+_PRICING = {
+    "claude-haiku-4-5-20251001": {"in": 1.0, "out": 5.0},
+    "claude-sonnet-4-6": {"in": 3.0, "out": 15.0},
+}
+_PRICING_DEFAULT = {"in": 3.0, "out": 15.0}
+
+def _log_usage(resp, user_id, model, kind):
+    """Registra tokens/costo de una llamada a Claude. Nunca debe romper el flujo."""
+    try:
+        u = getattr(resp, "usage", None)
+        if not u:
+            return
+        it = getattr(u, "input_tokens", 0) or 0
+        ot = getattr(u, "output_tokens", 0) or 0
+        cr = getattr(u, "cache_read_input_tokens", 0) or 0
+        cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+        p = _PRICING.get(model, _PRICING_DEFAULT)
+        cost = (it * p["in"] + ot * p["out"] + cr * p["in"] * 0.1 + cw * p["in"] * 1.25) / 1_000_000
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO api_usage(user_id,model,kind,input_tokens,output_tokens,cache_read,cache_write,cost_usd) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (user_id, model, kind, it, ot, cr, cw, round(cost, 6)))
+        conn.commit(); conn.close()
+    except Exception:
+        log.exception("log_usage fallo (no critico)")
+
+# ── Controles de costo ────────────────────────────────────────────────────────
+DAILY_GLOBAL_CAP_USD = float(os.environ.get("DAILY_GLOBAL_CAP_USD", "5") or 5)
+FREE_DAILY_MSGS = int(os.environ.get("FREE_DAILY_MSGS", "15") or 15)
+
+# ── Planes (límites por plan; los beneficios aplican al HOGAR, no al usuario) ──
+PLAN_RANK = {"free": 0, "pareja": 1, "pro": 2}
+PLAN_LIMITS = {
+    "free":   {"msgs": FREE_DAILY_MSGS, "household": 1},
+    "pareja": {"msgs": int(os.environ.get("PAREJA_DAILY_MSGS", "150") or 150), "household": 2},
+    "pro":    {"msgs": int(os.environ.get("PRO_DAILY_MSGS", "100000") or 100000),
+               "household": int(os.environ.get("PRO_HOUSEHOLD", "6") or 6)},
+}
+
+def plan_limits(plan):
+    return PLAN_LIMITS.get((plan or "free").strip().lower(), PLAN_LIMITS["free"])
+
+def household_plan(user_id):
+    """Mejor plan del hogar (free<pareja<pro). Define quota de mensajes y tope de miembros
+    para TODO el hogar (un miembro pago hace que toda la familia tenga el beneficio)."""
+    try:
+        ids = household_member_ids(user_id)
+        if not ids:
+            return _user_plan(user_id)
+        conn = sqlite3.connect(DB_PATH)
+        ph = ",".join("?" for _ in ids)
+        plans = [(r[0] or "free") for r in conn.execute(f"SELECT plan FROM users WHERE id IN ({ph})", ids).fetchall()]
+        conn.close()
+        return max(plans, key=lambda p: PLAN_RANK.get(p, 0)) if plans else "free"
+    except Exception:
+        return _user_plan(user_id)
+
+def _today_cost_usd():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd),0) FROM api_usage WHERE date(created_at)=date('now')"
+        ).fetchone()
+        conn.close()
+        return float(row[0] or 0)
+    except Exception:
+        return 0.0
+
+def _user_plan(user_id):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute("SELECT plan FROM users WHERE id=?", (user_id,)).fetchone()
+        conn.close()
+        return (row[0] if row and row[0] else "free")
+    except Exception:
+        return "free"
+
+def _user_msgs_today(user_id):
+    """Cuenta mensajes (llamadas al parser Haiku) de un usuario hoy."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT COUNT(*) FROM api_usage WHERE user_id=? AND kind='parser' "
+            "AND date(created_at)=date('now')", (user_id,)).fetchone()
+        conn.close()
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+
+def cost_gate(user_id):
+    """Devuelve un mensaje si hay que frenar al usuario, o None si puede seguir.
+    Fail-open: si cualquier chequeo falla, dejamos pasar (nunca bloquear por un bug)."""
+    try:
+        if _today_cost_usd() >= DAILY_GLOBAL_CAP_USD:
+            log.warning("TOPE GLOBAL diario alcanzado (US$%.2f). Pausando.", DAILY_GLOBAL_CAP_USD)
+            return "Llegamos al límite de uso de hoy 😴 Probá de nuevo mañana."
+        plan = household_plan(user_id)
+        limit = plan_limits(plan)["msgs"]
+        if _user_msgs_today(user_id) >= limit:
+            extra = " Pasate a un plan superior para enviar más." if plan == "free" else ""
+            return f"Llegaste a los {limit} mensajes de hoy (plan {plan}) 🙌 Mañana se renueva.{extra}"
+    except Exception:
+        log.exception("cost_gate fallo (dejo pasar)")
+    return None
 MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
 DIAS_ES = ["lun","mar","mié","jue","vie","sáb","dom"]
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
@@ -114,15 +222,26 @@ def parse_local(s):
     return datetime.fromisoformat(s).replace(tzinfo=TZ)
 
 
+PBKDF2_ITERS = 200_000
+
 def hash_password(password):
     salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}${h}"
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ITERS).hex()
+    return f"pbkdf2${PBKDF2_ITERS}${salt}${h}"
 
 def verify_password(password, stored):
-    if not stored or "$" not in stored: return False
+    """Acepta PBKDF2 (nuevo) y sha256 salteado (legacy)."""
+    if not stored: return False
+    if stored.startswith("pbkdf2$"):
+        try:
+            _, iters, salt, h = stored.split("$", 3)
+            calc = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(iters)).hex()
+            return secrets.compare_digest(calc, h)
+        except Exception:
+            return False
+    if "$" not in stored: return False  # legacy: salt$sha256(salt+pw)
     salt, h = stored.split("$", 1)
-    return hashlib.sha256((salt + password).encode()).hexdigest() == h
+    return secrets.compare_digest(hashlib.sha256((salt + password).encode()).hexdigest(), h)
 
 
 def init_db():
@@ -247,6 +366,15 @@ def init_db():
             event_id INTEGER NOT NULL, file_id TEXT NOT NULL, kind TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')));
         CREATE INDEX IF NOT EXISTS idx_evatt_ev ON event_attachments(event_id);
+        CREATE TABLE IF NOT EXISTS api_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER, model TEXT, kind TEXT,
+            input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+            cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
+            cost_usd REAL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')));
+        CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage(created_at);
+        CREATE INDEX IF NOT EXISTS idx_api_usage_user ON api_usage(user_id, created_at);
     """)
     for tbl in ("accounts","transactions","recurring","eventos","recordatorios","tareas","habito_logs","notas"):
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
@@ -254,19 +382,59 @@ def init_db():
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN user_id INTEGER")
     # columnas nuevas para las features (idempotente; closing_day/due_day ya pueden existir por migrate_tarjetas.py)
     _ALTERS = {
+        "users": [("plan", "TEXT DEFAULT 'free'"),
+                  ("referral_code", "TEXT"),
+                  ("referred_by", "INTEGER"),
+                  ("channel", "TEXT DEFAULT 'telegram'"),
+                  ("wa_id", "TEXT"),
+                  ("household_id", "INTEGER"),
+                  ("link_code", "TEXT"),
+                  ("link_code_exp", "TEXT")],
         "accounts": [("preferred_fx_rate", "TEXT"), ("closing_day", "INTEGER"), ("due_day", "INTEGER")],
         "recordatorios": [("recurrence", "TEXT"), ("list_id", "INTEGER"), ("event_id", "INTEGER")],
         "transactions": [("is_shared", "INTEGER DEFAULT 0")],
         "eventos": [("kind", "TEXT")],
+        "notas": [("description", "TEXT")],
         "shopping_items": [("list_id", "INTEGER"), ("qty", "REAL"), ("unit", "TEXT"),
                            ("note", "TEXT"), ("category", "TEXT"), ("priority", "TEXT"),
                            ("position", "INTEGER"), ("added_by", "INTEGER"), ("price_est", "REAL")],
     }
     for _tbl, _newcols in _ALTERS.items():
         _existing = [r[1] for r in conn.execute(f"PRAGMA table_info({_tbl})").fetchall()]
+        if not _existing:
+            continue  # tabla aún no creada → la salteamos (idempotente)
         for _col, _decl in _newcols:
             if _col not in _existing:
                 conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_decl}")
+    # La pareja (usuarios whitelisteados) = plan ilimitado. Idempotente: solo toca a
+    # los que están en ALLOWED_USER_IDS, nunca a un usuario free que se registre después.
+    if ALLOWED_USER_IDS:
+        _ph = ",".join("?" for _ in ALLOWED_USER_IDS)
+        conn.execute(
+            f"UPDATE users SET plan='pareja' WHERE plan='free' AND telegram_id IN ({_ph})",
+            ALLOWED_USER_IDS)
+    # referral_code para todos los usuarios que no tengan (idempotente)
+    if "referral_code" in [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]:
+        _existing_codes = set(r[0] for r in conn.execute(
+            "SELECT referral_code FROM users WHERE referral_code IS NOT NULL AND referral_code<>''").fetchall())
+        for (_uid,) in conn.execute(
+                "SELECT id FROM users WHERE referral_code IS NULL OR referral_code=''").fetchall():
+            _code = gen_referral_code()
+            while _code in _existing_codes:
+                _code = gen_referral_code()
+            _existing_codes.add(_code)
+            conn.execute("UPDATE users SET referral_code=? WHERE id=?", (_code, _uid))
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_refcode ON users(referral_code)")
+    # Aislamiento por hogar (multi-inquilino). La pareja (ALLOWED_USER_IDS) comparte el hogar 1;
+    # cualquier otro usuario = su propio hogar (household_id = su id). Idempotente.
+    if "household_id" in [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]:
+        if ALLOWED_USER_IDS:
+            _ph = ",".join("?" for _ in ALLOWED_USER_IDS)
+            conn.execute(f"UPDATE users SET household_id=1 WHERE household_id IS NULL AND telegram_id IN ({_ph})",
+                         ALLOWED_USER_IDS)
+        conn.execute("UPDATE users SET household_id=id WHERE household_id IS NULL")  # resto → hogar propio
+        # Listas existentes (globales, sin dueño) → hogar de la pareja (Emir, id 1).
+        conn.execute("UPDATE lists SET owner_user_id=1 WHERE owner_user_id IS NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_items_list ON shopping_items(list_id, done)")
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -278,6 +446,25 @@ def init_db():
     _deflist = conn.execute("SELECT id FROM lists WHERE name='Súper' LIMIT 1").fetchone()
     if _deflist:
         conn.execute("UPDATE shopping_items SET list_id=? WHERE list_id IS NULL", (_deflist[0],))
+    # Categorías por hogar (A-3): quitar el UNIQUE global de `name` y agregar household_id.
+    # Las categorías existentes (defaults) quedan COMPARTIDAS (household_id NULL). Idempotente:
+    # solo reconstruye si falta household_id o el índice (name,household_id).
+    _cat_cols = [r[1] for r in conn.execute("PRAGMA table_info(categories)").fetchall()]
+    _has_cat_idx = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_cat_hh_name'").fetchone()
+    if _cat_cols and (("household_id" not in _cat_cols) or not _has_cat_idx):
+        _hh_sel = "household_id" if "household_id" in _cat_cols else "NULL"
+        conn.execute("""CREATE TABLE IF NOT EXISTS categories_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'gasto',
+            color TEXT, icon TEXT, active INTEGER NOT NULL DEFAULT 1,
+            household_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')))""")
+        conn.execute(f"""INSERT INTO categories_new (id,name,type,color,icon,active,household_id,created_at)
+            SELECT id,name,type,color,icon,active,{_hh_sel},created_at FROM categories""")
+        conn.execute("DROP TABLE categories")
+        conn.execute("ALTER TABLE categories_new RENAME TO categories")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cat_hh_name ON categories(household_id, name)")
     if conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
         conn.executemany("INSERT INTO categories (name,type,color,icon) VALUES (?,?,?,?)", [
             ("Comida","gasto","#84cc16","🛒"),
@@ -306,6 +493,125 @@ def get_user_by_tg(tg_id):
     row = conn.execute("SELECT * FROM users WHERE telegram_id=? AND active=1", (tg_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def get_user_by_wa(wa_id):
+    if not wa_id: return None
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM users WHERE wa_id=? AND active=1", (str(wa_id),)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def household_member_ids(uid):
+    """IDs de usuarios del MISMO hogar que uid (incl. uid). Aislamiento multi-inquilino:
+    la pareja comparte hogar 1; cada usuario nuevo está solo en su hogar (= su id)."""
+    if uid is None:
+        return []
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM users WHERE COALESCE(household_id,id)=(SELECT COALESCE(household_id,id) FROM users WHERE id=?)",
+            (uid,)).fetchall()]
+    except Exception:
+        ids = []
+    finally:
+        conn.close()
+    return ids or [uid]
+
+
+# ─── Referidos / onboarding (channel-agnostic) ──────────────────────────────
+INVITE_MODE = (os.environ.get("INVITE_MODE", "admins").strip().lower() or "admins")
+_REF_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # sin caracteres ambiguos (l/o/0/1/i)
+
+def gen_referral_code(n=7):
+    return "".join(secrets.choice(_REF_ALPHABET) for _ in range(n))
+
+def get_user_by_referral_code(code):
+    if not code: return None
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM users WHERE referral_code=? AND active=1", (code.strip(),)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def can_invite(user):
+    """Beta: solo admins (telegram_id en ALLOWED_USER_IDS) invitan. INVITE_MODE=all abre a todos."""
+    if INVITE_MODE == "all": return True
+    return bool(user) and user.get("telegram_id") in ALLOWED_USER_IDS
+
+def _unique_username(conn, base):
+    base = re.sub(r"[^a-z0-9]", "", (base or "").lower()) or "user"
+    base = base[:20]
+    cand = base; i = 1
+    while conn.execute("SELECT 1 FROM users WHERE username=?", (cand,)).fetchone():
+        i += 1; cand = f"{base}{i}"
+    return cand
+
+def onboard_user(channel, channel_user_id, display_name, referred_by_id=None, household_id=None):
+    """Crea (o devuelve, si ya existe) un usuario. Devuelve (user_dict, temp_password|None). Idempotente.
+    WhatsApp: se guarda con telegram_id = -<telefono> (negativo, sin colisión con IDs reales) + wa_id.
+    Si household_id viene dado, el usuario SE UNE a ese hogar (familia); si no, hogar propio (aislado)."""
+    if channel == "telegram":
+        existing = get_user_by_tg(channel_user_id)
+        if existing:
+            return existing, None
+        tg_id, wa_id = channel_user_id, None
+    elif channel == "whatsapp":
+        existing = get_user_by_wa(channel_user_id)
+        if existing:
+            return existing, None
+        tg_id, wa_id = -int(channel_user_id), str(channel_user_id)
+    else:
+        tg_id, wa_id = None, None
+    name = (display_name or "Usuario").strip()[:40] or "Usuario"
+    temp_pw = secrets.token_urlsafe(6)
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    try:
+        username = _unique_username(conn, name)
+        code = gen_referral_code()
+        while conn.execute("SELECT 1 FROM users WHERE referral_code=?", (code,)).fetchone():
+            code = gen_referral_code()
+        conn.execute(
+            "INSERT INTO users(telegram_id, name, username, password_hash, plan, "
+            "referral_code, referred_by, channel, wa_id, active) VALUES (?,?,?,?,?,?,?,?,?,1)",
+            (tg_id, name, username, hash_password(temp_pw), "free", code, referred_by_id, channel, wa_id))
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # Se une al hogar dado (familia) o, si no, hogar propio (aislado).
+        hh = household_id if household_id else new_id
+        conn.execute("UPDATE users SET household_id=? WHERE id=?", (hh, new_id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE id=?", (new_id,)).fetchone()
+        return dict(row), temp_pw
+    finally:
+        conn.close()
+
+
+def link_whatsapp(code, phone):
+    """Vincula el WhatsApp <phone> a la cuenta que generó <code> con /vincular.
+    Si ya existía una cuenta WhatsApp-only con ese phone (duplicado del onboarding), la borra.
+    Devuelve (ok: bool, name: str|None). Idempotente / seguro (código expira y es de un solo uso)."""
+    if not code or not phone:
+        return False, None
+    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE link_code=? AND active=1 "
+            "AND (link_code_exp IS NULL OR link_code_exp >= datetime('now'))", (code.strip().upper(),)).fetchone()
+        if not row:
+            return False, None
+        target = dict(row)
+        dup = conn.execute("SELECT id FROM users WHERE wa_id=? AND id<>?", (str(phone), target["id"])).fetchone()
+        if dup:  # cuenta WhatsApp duplicada (nueva/vacía) → la fusionamos borrándola
+            conn.execute("DELETE FROM users WHERE id=?", (dup[0],))
+        conn.execute("UPDATE users SET wa_id=?, link_code=NULL, link_code_exp=NULL WHERE id=?",
+                     (str(phone), target["id"]))
+        conn.commit()
+        return True, target["name"]
+    except Exception:
+        log.exception("link_whatsapp fallo")
+        return False, None
+    finally:
+        conn.close()
 
 def get_user_by_id(uid):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
@@ -679,12 +985,14 @@ def _first_account_name(user_id):
 
 
 # ── Lista de compras helpers DB (Fase 6) ───────────────────────────────────
-def _default_list_id():
+def _default_list_id(uid):
+    members = household_member_ids(uid)
+    ph = ",".join("?" for _ in members)
     with db() as c:
-        r = c.execute("SELECT id FROM lists WHERE name='Súper' LIMIT 1").fetchone()
+        r = c.execute(f"SELECT id FROM lists WHERE name='Súper' AND owner_user_id IN ({ph}) LIMIT 1", members).fetchone()
         if r:
             return r["id"]
-        r = c.execute("SELECT id FROM lists WHERE COALESCE(is_template,0)=0 ORDER BY id LIMIT 1").fetchone()
+        r = c.execute(f"SELECT id FROM lists WHERE COALESCE(is_template,0)=0 AND owner_user_id IN ({ph}) ORDER BY id LIMIT 1", members).fetchone()
         return r["id"] if r else None
 
 
@@ -714,18 +1022,25 @@ _LIST_COLS = "id,name,icon,kind,target_date,recurrence"
 
 def _resolve_list(name, uid, create=True):
     """Devuelve {id,name,icon,kind,target_date,recurrence} de la lista por nombre
-    (insensible a acentos/mayus). name vacio -> lista por defecto (Súper).
-    Si no existe y create=True, la crea. Excluye plantillas (is_template=1)."""
+    (insensible a acentos/mayus). name vacio -> lista por defecto (Súper) DEL HOGAR de uid.
+    Si no existe y create=True, la crea. Excluye plantillas. Scopeado por hogar (aislamiento)."""
+    members = household_member_ids(uid)
+    ph = ",".join("?" for _ in members)
     if not name or not name.strip():
-        lid = _default_list_id()
+        lid = _default_list_id(uid)
         if lid is None:
-            return None
+            if not create:
+                return None
+            with db() as c:  # crear la lista por defecto del hogar
+                c.execute("INSERT INTO lists (name, kind, icon, owner_user_id, shared) "
+                          "VALUES ('Súper','supermercado','🛒',?,1)", (uid,))
+                lid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
         with db() as c:
             r = c.execute(f"SELECT {_LIST_COLS} FROM lists WHERE id=?", (lid,)).fetchone()
         return dict(r) if r else None
     q = _norm_name(name)
     with db() as c:
-        rows = c.execute(f"SELECT {_LIST_COLS} FROM lists WHERE COALESCE(is_template,0)=0").fetchall()
+        rows = c.execute(f"SELECT {_LIST_COLS} FROM lists WHERE COALESCE(is_template,0)=0 AND owner_user_id IN ({ph})", members).fetchall()
         for r in rows:
             if _norm_name(r["name"]) == q:
                 return dict(r)
@@ -740,13 +1055,15 @@ def _resolve_list(name, uid, create=True):
             "target_date": None, "recurrence": None}
 
 
-def _find_template(name):
-    """Busca una lista plantilla (is_template=1) por nombre (insensible a acentos). dict o None."""
+def _find_template(name, uid):
+    """Busca una plantilla (is_template=1) por nombre DENTRO DEL HOGAR de uid. dict o None."""
     if not name or not name.strip():
         return None
+    members = household_member_ids(uid)
+    ph = ",".join("?" for _ in members)
     q = _norm_name(name)
     with db() as c:
-        rows = c.execute(f"SELECT {_LIST_COLS} FROM lists WHERE COALESCE(is_template,0)=1").fetchall()
+        rows = c.execute(f"SELECT {_LIST_COLS} FROM lists WHERE COALESCE(is_template,0)=1 AND owner_user_id IN ({ph})", members).fetchall()
     for r in rows:
         if _norm_name(r["name"]) == q:
             return dict(r)
@@ -770,9 +1087,11 @@ def _list_subtitle(lst):
     return " · ".join(parts) if parts else None
 
 
-def _shopping_items(list_id=None):
+def _shopping_items(list_id=None, uid=None):
     if list_id is None:
-        list_id = _default_list_id()
+        list_id = _default_list_id(uid)
+    if list_id is None:
+        return []
     with db() as c:
         rows = c.execute(
             "SELECT id, text, done, qty, unit, category, position FROM shopping_items "
@@ -877,8 +1196,8 @@ def save_habito(h, raw_id, user_id):
 def save_nota(n, raw_id, user_id):
     tags = json.dumps(n.get("tags") or [], ensure_ascii=False)
     conn = sqlite3.connect(DB_PATH)
-    cur = conn.execute("INSERT INTO notas (text,tags,raw_message_id,user_id) VALUES (?,?,?,?)",
-                       (n["text"], tags, raw_id, user_id))
+    cur = conn.execute("INSERT INTO notas (text,tags,description,raw_message_id,user_id) VALUES (?,?,?,?,?)",
+                       (n["text"], tags, n.get("description"), raw_id, user_id))
     conn.commit(); nid = cur.lastrowid; conn.close()
     return nid
 
@@ -890,9 +1209,22 @@ def compute_next_monthly(current_iso, day_of_month):
     return f"{ny}-{nm:02d}-{d:02d}"
 
 def is_allowed(update):
-    if not ALLOWED_USER_IDS: return True
-    if update.effective_user.id not in ALLOWED_USER_IDS: return False
-    return get_user_by_tg(update.effective_user.id) is not None
+    """Permitido = usuario registrado activo (existe en users por telegram_id).
+    La beta es solo-invitación: se entra vía deep-link de referido (ver start_cmd)."""
+    try:
+        return get_user_by_tg(update.effective_user.id) is not None
+    except Exception:
+        return False
+
+REGISTER_MSG = ("👋 Yumi todavía es por invitación.\n"
+                "Pedile a quien te invitó su link de Yumi para entrar. "
+                "Pronto vas a poder registrarte solo.")
+
+async def send_register_prompt(update):
+    try:
+        await update.message.reply_text(REGISTER_MSG)
+    except Exception:
+        log.exception("no pude mandar register prompt")
 
 def _strip_json(content):
     content = content.strip()
@@ -1028,7 +1360,7 @@ PARSER_TOOL = {
                     "properties": {
                         "intent": {"type": "string", "enum": [
                             "transaccion","transferencia","recurrente","mover","eliminar","editar",
-                            "evento","recordatorio","tarea","habito","nota","crear_cuenta","consulta",
+                            "evento","recordatorio","tarea","habito","nota","crear_cuenta","editar_cuenta","consulta",
                             "gasto_compartido","saldar","meta_ahorro","lista_compra","alerta_dolar",
                             "set_takenos_rate","dolar","afford","precio","desconocido"]},
                         "confidence": {"type": "number"},
@@ -1069,6 +1401,7 @@ TABLA DE DECISION:
 7. Pendiente accionable SIN momento exacto (tengo que, hay que) -> tarea
 8. anota/apunta/acordate que/idea: -> nota
 9. "crear cuenta X" / "agrega la cuenta X" / "nueva cuenta Y" -> crear_cuenta
+9b. "renombra/edita/cambia el nombre de la cuenta X a Y" -> editar_cuenta (old_name=X, new_name=Y)
 10. Pregunta sobre datos (cuanto gaste, que tengo) -> consulta
 11. borra/move/edita/cambia con #IDs o filtros -> eliminar/mover/editar
 12. Nada matchea -> desconocido con data.aclaracion = UNA pregunta concreta
@@ -1103,6 +1436,7 @@ tarea: {"text":str,"priority":"baja"|"media"|"alta","due_at":"YYYY-MM-DD"|null}
 habito: {"name":str,"value":num|null,"unit":str|null,"note":str|null}
 nota: {"text":str,"tags":[str]|null}
 crear_cuenta: {"name":str,"type":"efectivo"|"billetera"|"credito"|"banco"|"inversion","icon":str|null}
+editar_cuenta: {"old_name":str,"new_name":str}  (renombrar una cuenta existente)
 consulta: {"type":"resumen"|"transacciones"|"recurrentes"|"cuentas"|"eventos"|"tareas"|"habitos"|"notas"|"pendientes"|"cotizacion"|"balance"|"balance_pareja"|"otro","intencion":"total"|"lista"|"promedio"|"ranking"|"max"|"min"|"conteo"|null,"filters":{"keyword":str|null,"category":str|null,"account":str|null,"type":"gasto"|"ingreso"|null,"currency":"ARS"|"USD"|"EUR"|null,"period":"hoy"|"ayer"|"semana"|"semana_pasada"|"mes"|"mes_pasado"|"ano"|"ano_pasado"|"todo"|null,"date_from":"YYYY-MM-DD"|null,"date_to":"YYYY-MM-DD"|null,"amount_min":num|null,"amount_max":num|null,"scope":"mine"|"ours"|"user:<nombre>"|null},"limit":int|null,"group_by":"category"|"account"|"user"|null,"order":"newest"|"oldest"|"largest"|null,"compare_period":"mes_pasado"|"semana_pasada"|"ano_pasado"|null}
 gasto_compartido: {"amount":num,"currency":"ARS"|"USD"|"EUR","category":str,"account":str,"description":str,"other_share":num|null,"occurred_at":"YYYY-MM-DDTHH:MM"}
 saldar: {}
@@ -1137,6 +1471,9 @@ EJEMPLOS:
 
 "agrega la cuenta Visa Galicia"
 -> crear_cuenta{name:"Visa Galicia",type:"credito"}
+
+"renombra la cuenta Mercopal a Mercado Pago" / "cambiale el nombre a la cuenta X por Y"
+-> editar_cuenta{old_name:"Mercopal",new_name:"Mercado Pago"}
 
 EJEMPLOS DE CONSULTA:
 "cuanto llevo gastado en combustible este mes?"
@@ -1312,7 +1649,7 @@ def parse_intent(text, user_id, user_name, prev_consulta=None):
     text = normalize_amounts(text)
     system = build_parser_system(user_id, user_name)
 
-    def call(model):
+    def call(model, kind="parser"):
         user_content = text
         if prev_consulta:
             user_content = (
@@ -1322,10 +1659,12 @@ def parse_intent(text, user_id, user_name, prev_consulta=None):
                 + json.dumps(prev_consulta, ensure_ascii=False)
                 + "\n\nMENSAJE: " + text)
         resp = anthropic_client.messages.create(
-            model=model, max_tokens=2000, system=system,
+            model=model, max_tokens=2000,
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_content}],
             tools=[PARSER_TOOL],
             tool_choice={"type": "tool", "name": "registrar_acciones"})
+        _log_usage(resp, user_id, model, kind)
         for block in resp.content:
             if block.type == "tool_use":
                 return block.input.get("acciones") or []
@@ -1336,7 +1675,7 @@ def parse_intent(text, user_id, user_name, prev_consulta=None):
         a.get("intent") == "desconocido" or (a.get("confidence") or 1) < 0.5 for a in acciones)
     if dudoso:
         try:
-            retry = call(MODEL_SMART)
+            retry = call(MODEL_SMART, kind="parser_esc")
             if retry and not all(a.get("intent") == "desconocido" for a in retry):
                 acciones = retry
                 log.info("Parser escalado a %s", MODEL_SMART)
@@ -1428,6 +1767,7 @@ def parse_photo(image_bytes, caption="", user_id=None, user_name=None):
             {"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":b64}},
             {"type":"text","text":user_text}
         ]}])
+    _log_usage(resp, user_id, MODEL, "foto")
     return json.loads(_strip_json(resp.content[0].text))
 
 
@@ -1566,73 +1906,76 @@ async def callback_handler(update, context):
     action, arg = parts
     base_text = q.message.text or ""
 
+    # Aislamiento: todas las acciones por id se acotan al HOGAR del que clickea
+    # (callback_data lo controla el cliente → si no se filtra, es IDOR cross-usuario).
     if action == "tdone":
         try:
-            tid = int(arg)
+            tid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("UPDATE tareas SET status='hecha', completed_at=datetime('now') WHERE id=?", (tid,))
-            conn.commit(); conn.close()
-            await q.answer(f"✓ Tarea #{tid} hecha")
+            cur = conn.execute(f"UPDATE tareas SET status='hecha', completed_at=datetime('now') WHERE id=? AND user_id IN ({ph})", [tid]+m)
+            conn.commit(); n = cur.rowcount; conn.close()
+            await q.answer(f"✓ Tarea #{tid} hecha" if n else "No es tuya", show_alert=not n)
         except Exception:
             log.exception("tdone"); await q.answer("Error", show_alert=True)
         return
 
     if action == "tdel":
         try:
-            tid = int(arg)
+            tid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("DELETE FROM tareas WHERE id=?", (tid,))
-            conn.commit(); conn.close()
-            await q.answer(f"× Tarea #{tid} borrada")
+            cur = conn.execute(f"DELETE FROM tareas WHERE id=? AND user_id IN ({ph})", [tid]+m)
+            conn.commit(); n = cur.rowcount; conn.close()
+            await q.answer(f"× Tarea #{tid} borrada" if n else "No es tuya", show_alert=not n)
         except Exception:
             log.exception("tdel"); await q.answer("Error", show_alert=True)
         return
 
     if action == "txdel":
         try:
-            tid = int(arg)
+            tid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("DELETE FROM transactions WHERE id=?", (tid,))
-            conn.commit(); conn.close()
-            await q.answer("🗑️ Borrada")
-            await q.edit_message_text(base_text + "\n\n🗑️ Borrada.")
+            cur = conn.execute(f"DELETE FROM transactions WHERE id=? AND user_id IN ({ph})", [tid]+m)
+            conn.commit(); n = cur.rowcount; conn.close()
+            if n:
+                await q.answer("🗑️ Borrada"); await q.edit_message_text(base_text + "\n\n🗑️ Borrada.")
+            else:
+                await q.answer("No es tuya", show_alert=True)
         except Exception:
             log.exception("txdel"); await q.answer("Error", show_alert=True)
         return
 
     if action == "rectoggle":
         try:
-            rid = int(arg)
+            rid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT active FROM recurring WHERE id=?", (rid,)).fetchone()
+            row = conn.execute(f"SELECT active FROM recurring WHERE id=? AND user_id IN ({ph})", [rid]+m).fetchone()
             if row:
-                new_active = 0 if row['active'] else 1
-                conn.execute("UPDATE recurring SET active=? WHERE id=?", (new_active, rid))
-                conn.commit()
-            conn.close()
-            await q.answer("Estado cambiado")
+                conn.execute(f"UPDATE recurring SET active=? WHERE id=? AND user_id IN ({ph})", [0 if row['active'] else 1, rid]+m)
+                conn.commit(); conn.close(); await q.answer("Estado cambiado")
+            else:
+                conn.close(); await q.answer("No es tuya", show_alert=True)
         except Exception:
             log.exception("rectoggle"); await q.answer("Error", show_alert=True)
         return
 
     if action == "recdel":
         try:
-            rid = int(arg)
+            rid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("DELETE FROM recurring WHERE id=?", (rid,))
-            conn.commit(); conn.close()
-            await q.answer("🗑️ Borrada")
+            cur = conn.execute(f"DELETE FROM recurring WHERE id=? AND user_id IN ({ph})", [rid]+m)
+            conn.commit(); n = cur.rowcount; conn.close()
+            await q.answer("🗑️ Borrada" if n else "No es tuya", show_alert=not n)
         except Exception:
             log.exception("recdel"); await q.answer("Error", show_alert=True)
         return
 
     if action == "remdel":
         try:
-            rid = int(arg)
+            rid = int(arg); m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             conn = sqlite3.connect(DB_PATH)
-            conn.execute("UPDATE recordatorios SET fired=1 WHERE id=?", (rid,))
-            conn.commit(); conn.close()
-            await q.answer("⏰ Cancelado")
+            cur = conn.execute(f"UPDATE recordatorios SET fired=1 WHERE id=? AND user_id IN ({ph})", [rid]+m)
+            conn.commit(); n = cur.rowcount; conn.close()
+            await q.answer("⏰ Cancelado" if n else "No es tuyo", show_alert=not n)
         except Exception:
             log.exception("remdel"); await q.answer("Error", show_alert=True)
         return
@@ -1662,8 +2005,9 @@ async def callback_handler(update, context):
         try:
             acc_id = int(arg)
             today = now_local().date()
+            m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             with db() as c:
-                card = c.execute("SELECT * FROM accounts WHERE id=?", (acc_id,)).fetchone()
+                card = c.execute(f"SELECT * FROM accounts WHERE id=? AND user_id IN ({ph})", [acc_id]+m).fetchone()
             if not card:
                 await q.answer("Cuenta no encontrada", show_alert=True); return
             d = vencimientos.calcular_vencimiento(DB_PATH, dict(card), today)
@@ -1691,8 +2035,11 @@ async def callback_handler(update, context):
     if action == "lscheck":
         try:
             iid = int(arg)
+            m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             with db() as c:
-                row = c.execute("SELECT done, list_id FROM shopping_items WHERE id=?", (iid,)).fetchone()
+                row = c.execute(
+                    f"SELECT s.done, s.list_id FROM shopping_items s JOIN lists l ON l.id=s.list_id "
+                    f"WHERE s.id=? AND l.owner_user_id IN ({ph})", [iid]+m).fetchone()
                 if not row:
                     await q.answer("Ese item ya no esta"); return
                 new_done = 0 if row["done"] else 1
@@ -1714,7 +2061,10 @@ async def callback_handler(update, context):
     if action == "lsclear":
         try:
             lid = int(arg)
+            m = household_member_ids(current_user_id(update)); ph = ",".join("?" for _ in m)
             with db() as c:
+                if not c.execute(f"SELECT 1 FROM lists WHERE id=? AND owner_user_id IN ({ph})", [lid]+m).fetchone():
+                    await q.answer("No es tuya", show_alert=True); return
                 c.execute("DELETE FROM shopping_items WHERE list_id=? AND done=1", (lid,))
             await q.answer("🧹 Listo")
             text, kb = _render_shopping(lid)
@@ -1913,26 +2263,128 @@ async def post_init(app):
 
 
 async def start_cmd(update, context):
-    if not is_allowed(update):
-        await update.message.reply_text("Hola. No tenes permiso para usar este bot.\nTu Telegram ID es " + str(update.effective_user.id))
+    u = get_user_by_tg(update.effective_user.id)
+    if u:
+        await update.message.reply_text(
+            f"Hola {u['name']}. Mandame texto, audios o fotos:\n\n"
+            "💸 «pague 1000 coca cola con MP» / foto de un ticket\n"
+            "💰 «me pagaron 500 USD takenos sueldo»\n"
+            "🔁 «agenda Movistar 7000 todos los 10 con MP»\n"
+            "🏦 «crear cuenta Visa nueva tipo credito»\n"
+            "📊 «cuanto gastamos los dos este mes?»\n"
+            "📅 «cena con Ana viernes 21»\n"
+            "⏰ «recordame manana 9 llamar al banco»\n"
+            "✅ «tengo que pagar la luz»\n"
+            "💪 «hice 30 min de ejercicio»\n"
+            "📓 «anota: idea para X»\n\n"
+            "Comandos: /resumen /cuentas /recurrentes /movimientos /borrar N\n"
+            "/tareas /done N /habitos /pendientes /notas\n"
+            "/password <nueva> · /addcuenta <nombre> [tipo]\n"
+            "👨‍👩‍👧 /invitar — sumá a tu familia (comparten todo)")
         return
-    u = current_user(update)
-    saludo = f"Hola {u['name']}." if u else "Hola."
+    # No registrado: ¿viene con código de invitación? (deep-link t.me/<bot>?start=<code>)
+    code = (context.args[0].strip() if getattr(context, "args", None) else "")
+    # Invitación a la FAMILIA: el usuario nuevo se UNE al hogar del que invita (comparten todo).
+    if code.startswith("fam_"):
+        inviter = get_user_by_referral_code(code[4:])
+        if inviter:
+            cap = plan_limits(household_plan(inviter["id"]))["household"]
+            if len(household_member_ids(inviter["id"])) >= cap:
+                await update.message.reply_text(
+                    f"El hogar de {inviter['name']} ya está completo (hasta {cap} integrante(s) en su plan). "
+                    "Que actualice el plan para sumar a más.")
+                return
+            hh = inviter.get("household_id") or inviter["id"]
+            new_user, temp_pw = onboard_user(
+                "telegram", update.effective_user.id,
+                update.effective_user.first_name, inviter["id"], household_id=hh)
+            msg = (f"🎉 ¡Bienvenido/a a Yumi, {new_user['name']}! Te sumaste a la familia de {inviter['name']} — "
+                   "van a compartir listas, gastos y agenda.\n\n"
+                   "Mandame texto, audios o fotos:\n"
+                   "💸 «pagué 1000 de café con débito»\n"
+                   "📅 «cena con Ana el viernes 21»\n"
+                   "⏰ «recordame mañana 9 llamar al banco»\n\n")
+            if temp_pw:
+                msg += (f"🌐 *App web de Yumi:* {APP_URL}\n"
+                        f"Entrá con usuario *{new_user['username']}* y clave temporal `{temp_pw}` "
+                        f"(cambiala con /password <nueva>). También funciona acá en el chat.")
+            await update.message.reply_text(msg, parse_mode="Markdown")
+            return
+        await send_register_prompt(update); return
+    if code:
+        referrer = get_user_by_referral_code(code)
+        if referrer and can_invite(referrer):
+            new_user, temp_pw = onboard_user(
+                "telegram", update.effective_user.id,
+                update.effective_user.first_name, referrer["id"])
+            msg = (f"🎉 ¡Bienvenido/a a Yumi, {new_user['name']}! Te invitó {referrer['name']}.\n\n"
+                   "Soy tu asistente: mandame texto, audios o fotos.\n"
+                   "💸 «pagué 1000 de café con débito»\n"
+                   "📅 «cena con Ana el viernes 21»\n"
+                   "⏰ «recordame mañana 9 llamar al banco»\n\n")
+            if temp_pw:
+                msg += (f"🌐 *App web de Yumi:* {APP_URL}\n"
+                        f"Entrá con usuario *{new_user['username']}* y clave temporal `{temp_pw}` "
+                        f"(cambiala con /password <nueva>). El bot también funciona acá en el chat, sin necesidad de entrar a la web.")
+            await update.message.reply_text(msg, parse_mode="Markdown")
+            return
+    await send_register_prompt(update)
+
+
+async def invitar_cmd(update, context):
+    """Le da al usuario su link para invitar a su familia (se unen a SU hogar y comparten todo).
+    Respeta el plan: cuántos integrantes permite y cuántos lugares quedan."""
+    if not is_allowed(update):
+        await send_register_prompt(update); return
+    u = get_user_by_tg(update.effective_user.id)
+    if not u:
+        await send_register_prompt(update); return
+    plan = household_plan(u["id"])
+    cap = plan_limits(plan)["household"]
+    current = len(household_member_ids(u["id"]))
+    if cap <= 1:
+        await update.message.reply_text(
+            "Tu plan actual es individual 🙂 Para compartir con tu familia (listas, gastos, agenda), "
+            "actualizá a un plan *pareja* o superior.", parse_mode="Markdown"); return
+    if current >= cap:
+        await update.message.reply_text(
+            f"Tu hogar ya está completo: {current}/{cap} integrantes para tu plan ({plan}). "
+            "Actualizá el plan para sumar a más."); return
+    code = u.get("referral_code") or ""
+    try:
+        bot_un = (await context.bot.get_me()).username
+    except Exception:
+        bot_un = os.environ.get("BOT_USERNAME", "").lstrip("@")
+    if not (bot_un and code):
+        await update.message.reply_text("No pude generar tu link ahora. Probá de nuevo en un momento."); return
+    link = f"https://t.me/{bot_un}?start=fam_{code}"
+    slots = cap - current
     await update.message.reply_text(
-        f"{saludo} Mandame texto, audios o fotos:\n\n"
-        "💸 «pague 1000 coca cola con MP» / foto de un ticket\n"
-        "💰 «me pagaron 500 USD takenos sueldo»\n"
-        "🔁 «agenda Movistar 7000 todos los 10 con MP»\n"
-        "🏦 «crear cuenta Visa nueva tipo credito»\n"
-        "📊 «cuanto gastamos los dos este mes?»\n"
-        "📅 «cena con Ana viernes 21»\n"
-        "⏰ «recordame manana 9 llamar al banco»\n"
-        "✅ «tengo que pagar la luz»\n"
-        "💪 «hice 30 min de ejercicio»\n"
-        "📓 «anota: idea para X»\n\n"
-        "Comandos: /resumen /cuentas /recurrentes /movimientos /borrar N\n"
-        "/tareas /done N /habitos /pendientes /notas\n"
-        "/password <nueva> · /addcuenta <nombre> [tipo]")
+        "👨‍👩‍👧 *Sumá a tu familia a Yumi*\n\n"
+        f"Te queda{'n' if slots != 1 else ''} {slots} lugar{'es' if slots != 1 else ''} en tu hogar (plan {plan}).\n"
+        "Mandales este link; cuando lo abran, comparten con vos listas, gastos y agenda:\n\n"
+        f"{link}", parse_mode="Markdown")
+
+
+async def vincular_cmd(update, context):
+    """Vincula el WhatsApp del usuario a ESTA cuenta de Telegram (mismo dato en los dos canales)."""
+    if not is_allowed(update):
+        await send_register_prompt(update); return
+    u = get_user_by_tg(update.effective_user.id)
+    if not u:
+        await send_register_prompt(update); return
+    code = gen_referral_code(6).upper()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE users SET link_code=?, link_code_exp=datetime('now','+15 minutes') WHERE id=?", (code, u["id"]))
+    conn.commit(); conn.close()
+    num = os.environ.get("WHATSAPP_NUMBER", "").strip().lstrip("+")
+    msg = ("🔗 *Vincular tu WhatsApp con esta cuenta*\n\n"
+           "Mandá este mensaje al WhatsApp de Yumi:\n\n"
+           f"`vincular {code}`\n\n"
+           "Así vas a ver lo mismo en Telegram y en WhatsApp. (El código vence en 15 minutos.)")
+    if num:
+        msg += f"\n\nO tocá: https://wa.me/{num}?text=vincular%20{code}"
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def help_cmd(update, context):
@@ -2077,18 +2529,19 @@ async def compartidos_cmd(update, context):
     """Lista todo lo compartido entre ambos usuarios."""
     if not is_allowed(update): return
     uid = current_user_id(update)
+    _m = household_member_ids(uid); _mph = ",".join("?" for _ in _m)
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
 
     tareas = conn.execute(
         "SELECT t.id, t.text, t.status, t.priority, u.name AS owner "
         "FROM tareas t LEFT JOIN users u ON u.id=t.user_id "
-        "WHERE COALESCE(t.shared,0)=1 "
-        "ORDER BY t.status, t.id DESC LIMIT 30").fetchall()
+        f"WHERE COALESCE(t.shared,0)=1 AND t.user_id IN ({_mph}) "
+        "ORDER BY t.status, t.id DESC LIMIT 30", _m).fetchall()
     notas = conn.execute(
         "SELECT n.id, n.text, n.created_at, u.name AS owner "
         "FROM notas n LEFT JOIN users u ON u.id=n.user_id "
-        "WHERE COALESCE(n.shared,0)=1 "
-        "ORDER BY n.id DESC LIMIT 15").fetchall()
+        f"WHERE COALESCE(n.shared,0)=1 AND n.user_id IN ({_mph}) "
+        "ORDER BY n.id DESC LIMIT 15", _m).fetchall()
     conn.close()
 
     if not tareas and not notas:
@@ -2203,21 +2656,23 @@ async def resumen_cmd(update, context, user_id=None, shared=False):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     now = now_local(); mes_ini = now.strftime("%Y-%m-01")
     if shared:
+        # "compartido" = miembros de MI hogar (aislamiento), no global.
+        _m = household_member_ids(uid); _mph = ",".join("?" for _ in _m)
         totales = conn.execute(
-            "SELECT type, currency, SUM(amount) AS t FROM transactions WHERE occurred_at>=? GROUP BY type, currency",
-            (mes_ini,)).fetchall()
+            f"SELECT type, currency, SUM(amount) AS t FROM transactions WHERE occurred_at>=? AND user_id IN ({_mph}) GROUP BY type, currency",
+            [mes_ini] + _m).fetchall()
         por_cat = conn.execute(
             "SELECT COALESCE(c.name,'(sin categoria)') AS cat, t.currency, SUM(t.amount) AS total "
             "FROM transactions t LEFT JOIN categories c ON c.id=t.category_id "
-            "WHERE t.occurred_at>=? AND t.type='gasto' GROUP BY cat, t.currency ORDER BY total DESC LIMIT 10",
-            (mes_ini,)).fetchall()
+            f"WHERE t.occurred_at>=? AND t.type='gasto' AND t.user_id IN ({_mph}) GROUP BY cat, t.currency ORDER BY total DESC LIMIT 10",
+            [mes_ini] + _m).fetchall()
         por_acc = conn.execute(
             "SELECT a.name AS acc, t.currency, SUM(t.amount) AS total FROM transactions t "
-            "JOIN accounts a ON a.id=t.account_id WHERE t.occurred_at>=? AND t.type='gasto' "
-            "GROUP BY a.name, t.currency ORDER BY total DESC", (mes_ini,)).fetchall()
+            f"JOIN accounts a ON a.id=t.account_id WHERE t.occurred_at>=? AND t.type='gasto' AND t.user_id IN ({_mph}) "
+            "GROUP BY a.name, t.currency ORDER BY total DESC", [mes_ini] + _m).fetchall()
         eventos = conn.execute(
-            "SELECT title,starts_at,location FROM eventos WHERE starts_at>=? ORDER BY starts_at LIMIT 5",
-            (now.strftime("%Y-%m-%dT%H:%M"),)).fetchall()
+            f"SELECT title,starts_at,location FROM eventos WHERE starts_at>=? AND user_id IN ({_mph}) ORDER BY starts_at LIMIT 5",
+            [now.strftime("%Y-%m-%dT%H:%M")] + _m).fetchall()
     else:
         totales = conn.execute(
             "SELECT type, currency, SUM(amount) AS t FROM transactions WHERE occurred_at>=? AND user_id=? GROUP BY type, currency",
@@ -2389,12 +2844,13 @@ async def borrar_cmd(update, context):
 async def tareas_cmd(update, context):
     if not is_allowed(update): return
     uid = current_user_id(update)
+    _m = household_member_ids(uid); _mph = ",".join("?" for _ in _m)
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
         "SELECT id,text,priority,due_at,COALESCE(shared,0) AS sh FROM tareas WHERE status='pendiente' "
-        "AND (user_id=? OR COALESCE(shared,0)=1) "
+        f"AND (user_id=? OR (COALESCE(shared,0)=1 AND user_id IN ({_mph}))) "
         "ORDER BY CASE priority WHEN 'alta' THEN 1 WHEN 'media' THEN 2 ELSE 3 END, "
-        "COALESCE(due_at,'9999'), id LIMIT 30", (uid,)).fetchall()
+        "COALESCE(due_at,'9999'), id LIMIT 30", [uid] + _m).fetchall()
     conn.close()
     if not rows: await update.message.reply_text("Sin tareas pendientes 🎉"); return
     icons = {"alta":"🔴","media":"🟡","baja":"🟢"}
@@ -2497,13 +2953,14 @@ async def pendientes_cmd(update, context):
 async def notas_cmd(update, context):
     if not is_allowed(update): return
     uid = current_user_id(update)
+    _m = household_member_ids(uid); _mph = ",".join("?" for _ in _m)
     q = " ".join(context.args).strip() if (context and getattr(context,"args",None)) else None
     conn = sqlite3.connect(DB_PATH)
     if q:
-        rows = conn.execute("SELECT id,text,created_at,COALESCE(shared,0) AS sh FROM notas WHERE (user_id=? OR COALESCE(shared,0)=1) AND text LIKE ? ORDER BY created_at DESC LIMIT 10",(uid, f"%{q}%")).fetchall()
+        rows = conn.execute(f"SELECT id,text,created_at,COALESCE(shared,0) AS sh FROM notas WHERE (user_id=? OR (COALESCE(shared,0)=1 AND user_id IN ({_mph}))) AND text LIKE ? ORDER BY created_at DESC LIMIT 10",[uid] + _m + [f"%{q}%"]).fetchall()
         header = f"📓 Notas con «{q}»\n\n"
     else:
-        rows = conn.execute("SELECT id,text,created_at,COALESCE(shared,0) AS sh FROM notas WHERE (user_id=? OR COALESCE(shared,0)=1) ORDER BY created_at DESC LIMIT 10", (uid,)).fetchall()
+        rows = conn.execute(f"SELECT id,text,created_at,COALESCE(shared,0) AS sh FROM notas WHERE (user_id=? OR (COALESCE(shared,0)=1 AND user_id IN ({_mph}))) ORDER BY created_at DESC LIMIT 10", [uid] + _m).fetchall()
         header = "📓 Ultimas notas\n\n"
     conn.close()
     if not rows: await update.message.reply_text("Sin notas."); return
@@ -2576,17 +3033,20 @@ def _period_label(date_from, date_to, period):
 
 
 def resolve_scope(scope_str, asker_id):
+    """Devuelve (uid|None, label). None = TODO MI HOGAR (no global). 'user:X' solo se
+    permite si X pertenece al hogar del que pregunta (si no, cae a uno mismo → sin fuga)."""
+    members = household_member_ids(asker_id)
     if not scope_str: return asker_id, ""
     s = str(scope_str).strip().lower()
     if s in ("mine","mio","yo","propio"): return asker_id, ""
     if s in ("ours","ambos","los_dos","los dos","shared","compartido","both","juntos"):
         return None, " · compartido"
     if s.startswith("user:"):
-        name = s.split(":",1)[1].strip()
-        u = get_user_by_name(name)
-        if u: return u["id"], f" · de {u['name']}"
+        u = get_user_by_name(s.split(":",1)[1].strip())
+        if u and u["id"] in members: return u["id"], f" · de {u['name']}"
+        return asker_id, ""
     u = get_user_by_name(s)
-    if u: return u["id"], f" · de {u['name']}"
+    if u and u["id"] in members: return u["id"], f" · de {u['name']}"
     return asker_id, ""
 
 
@@ -2596,6 +3056,9 @@ def build_consulta_filter(filters, asker_id):
     scope_uid, scope_label = resolve_scope(f.get("scope"), asker_id)
     if scope_uid is not None:
         where.append("t.user_id = ?"); params.append(scope_uid)
+    else:  # "compartido" = SOLO mi hogar (no global)
+        _m = household_member_ids(asker_id)
+        where.append(f"t.user_id IN ({','.join('?' for _ in _m)})"); params.extend(_m)
     if f.get("keyword"):
         kw = str(f["keyword"]).strip()
         where.append(
@@ -2611,7 +3074,7 @@ def build_consulta_filter(filters, asker_id):
             where.append("LOWER(COALESCE(t.description,'')) LIKE LOWER(?)")
             params.append(f"%{f['category']}%")
     if f.get("account"):
-        acc = get_account_by_name(f["account"], user_id=scope_uid)
+        acc = get_account_by_name(f["account"], user_id=(scope_uid if scope_uid is not None else asker_id))
         if acc:
             where.append("t.account_id = ?"); params.append(acc["id"])
     if f.get("type"):
@@ -2653,6 +3116,9 @@ async def _eventos_query(update, filters, asker_id):
     where = []; params = []
     if scope_uid is not None:
         where.append("user_id = ?"); params.append(scope_uid)
+    else:  # "compartido" = solo mi hogar
+        _m = household_member_ids(asker_id)
+        where.append(f"user_id IN ({','.join('?' for _ in _m)})"); params.extend(_m)
     if date_from:
         where.append("starts_at >= ?"); params.append(date_from)
     else:
@@ -2693,21 +3159,23 @@ async def _balance_query(update, filters, asker_id):
     await cuentas_cmd(update, None)
 
 
-def _distinct_keyword_candidates(scope_uid):
-    """Tokens distintos de descripciones del usuario + nombres de categorias.
-    scope_uid None => todas (compartido)."""
+def _distinct_keyword_candidates(scope_uid, asker_id=None):
+    """Tokens distintos de descripciones (del usuario o de SU HOGAR) + nombres de categorias.
+    scope_uid None => miembros del hogar de asker_id (NUNCA global)."""
     cats, tokens = [], set()
     with db() as c:
         for r in c.execute("SELECT name FROM categories").fetchall():
             if r["name"]:
                 cats.append(r["name"])
-        if scope_uid is None:
-            rows = c.execute("SELECT DISTINCT description FROM transactions "
-                             "WHERE description IS NOT NULL AND description<>''").fetchall()
-        else:
+        if scope_uid is not None:
             rows = c.execute("SELECT DISTINCT description FROM transactions "
                              "WHERE user_id=? AND description IS NOT NULL AND description<>''",
                              (scope_uid,)).fetchall()
+        else:
+            _m = household_member_ids(asker_id) if asker_id else []
+            rows = c.execute(
+                f"SELECT DISTINCT description FROM transactions WHERE user_id IN ({','.join('?' for _ in _m)}) "
+                "AND description IS NOT NULL AND description<>''", _m).fetchall() if _m else []
     for r in rows:
         for tok in str(r["description"]).split():
             tok = tok.strip(".,;:()«»\"'").lower()
@@ -2716,12 +3184,12 @@ def _distinct_keyword_candidates(scope_uid):
     return cats + sorted(tokens)
 
 
-def _maybe_fuzzy_keyword(filters, scope_uid):
+def _maybe_fuzzy_keyword(filters, scope_uid, asker_id=None):
     """Si hay keyword, devuelve (close_match, new_filters) o (None, None)."""
     kw = (filters or {}).get("keyword")
     if not kw:
         return None, None
-    cand = _distinct_keyword_candidates(scope_uid)
+    cand = _distinct_keyword_candidates(scope_uid, asker_id)
     close = conversation.fuzzy_keyword(kw, cand, cutoff=0.6)
     if not close or conversation._norm(close) == conversation._norm(kw):
         return None, None
@@ -2834,7 +3302,7 @@ async def handle_consulta_intent(update, context, c):
         conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
         rows = conn.execute(sql, params).fetchall(); conn.close()
         if not rows or all((r["n"] or 0) == 0 for r in rows):
-            close, nf = _maybe_fuzzy_keyword(filters, scope_uid)
+            close, nf = _maybe_fuzzy_keyword(filters, scope_uid, asker_id)
             if close:
                 c2 = dict(c); c2["filters"] = nf
                 await update.message.reply_text(f"No encontre «{filters['keyword']}», asumiendo «{close}» 🔎")
@@ -2881,7 +3349,7 @@ async def handle_consulta_intent(update, context, c):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     rows = conn.execute(sql, params).fetchall(); conn.close()
     if not rows:
-        close, nf = _maybe_fuzzy_keyword(filters, scope_uid)
+        close, nf = _maybe_fuzzy_keyword(filters, scope_uid, asker_id)
         if close:
             c2 = dict(c); c2["filters"] = nf
             await update.message.reply_text(f"No encontre «{filters['keyword']}», asumiendo «{close}» 🔎")
@@ -3052,6 +3520,22 @@ async def handle_crear_cuenta(update, context, data):
     await update.message.reply_text(f"✅ Cuenta «{name}» ({tipo}) creada para vos.")
 
 
+async def handle_editar_cuenta(update, context, data):
+    uid = current_user_id(update)
+    old = (data.get("old_name") or "").strip()
+    new = (data.get("new_name") or "").strip()
+    if not old or not new:
+        await update.message.reply_text(
+            "Decime el nombre actual y el nuevo. Ej: «renombrá la cuenta Mercopal a Mercado Pago»."); return
+    acc = get_account_by_name(old, user_id=uid)
+    if not acc:
+        await update.message.reply_text(f"No encuentro una cuenta «{old}» entre las tuyas. Mirá /cuentas."); return
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE accounts SET name=? WHERE id=?", (new, acc["id"]))
+    conn.commit(); conn.close()
+    await update.message.reply_text(f"✅ Renombré «{acc['name']}» a «{new}».")
+
+
 async def handle_gasto_compartido_intent(update, context, data, raw_id):
     me = current_user(update)
     if not me:
@@ -3208,7 +3692,7 @@ async def _lista_save_template(update, uid, list_name, tname):
     if not items:
         await update.message.reply_text(f"La lista {src['name']} está vacía, no hay nada para guardar como plantilla.")
         return
-    tpl = _find_template(name)
+    tpl = _find_template(name, uid)
     with db() as c:
         if tpl:
             tpl_id = tpl["id"]
@@ -3231,7 +3715,7 @@ async def _lista_use_template(update, context, uid, tname, target_name):
     """Instancia una plantilla copiando sus items (done=0) en la lista destino."""
     if not tname:
         await update.message.reply_text("¿Qué plantilla uso? Ej: «armá la lista de compras semanales»."); return
-    tpl = _find_template(tname)
+    tpl = _find_template(tname, uid)
     if not tpl:
         await update.message.reply_text(
             f"No tengo una plantilla «{tname}». Guardá una con «guardá esta lista como plantilla {tname}».")
@@ -3436,6 +3920,10 @@ async def process_text(update, context, text, raw_id):
     user = current_user(update)
     if not user:
         await update.message.reply_text("No estas registrado en la DB."); return
+    # ---- controles de costo (tope global diario + quota free). Fail-open. ----
+    _blocked = cost_gate(user["id"])
+    if _blocked:
+        await update.message.reply_text(_blocked); return
     # ---- memoria de follow-ups: "¿y de Lisa?", "y la semana pasada" ----
     prev = None
     if context is not None and getattr(context, "user_data", None) is not None:
@@ -3548,6 +4036,8 @@ async def process_action(update, context, parsed, raw_id):
 
     elif intent == "crear_cuenta" and parsed.get("crear_cuenta"):
         await handle_crear_cuenta(update, context, parsed["crear_cuenta"])
+    elif intent == "editar_cuenta" and parsed.get("editar_cuenta"):
+        await handle_editar_cuenta(update, context, parsed["editar_cuenta"])
 
     elif intent == "evento" and parsed.get("evento"):
         e = parsed["evento"]; eid = save_evento(e, raw_id, uid)
@@ -3642,14 +4132,16 @@ async def process_action(update, context, parsed, raw_id):
 
 
 async def handle_text(update, context):
-    if not is_allowed(update): return
+    if not is_allowed(update):
+        await send_register_prompt(update); return
     user = update.effective_user; text = update.message.text
     raw_id = save_raw(user.id, user.username, "text", text)
     await process_text(update, context, text, raw_id)
 
 
 async def handle_voice(update, context):
-    if not is_allowed(update): return
+    if not is_allowed(update):
+        await send_register_prompt(update); return
     voice = update.message.voice
     notice = await update.message.reply_text("🎙️ Transcribiendo...")
     ogg_path = VOICE_DIR / f"{voice.file_id}.ogg"
@@ -3671,12 +4163,17 @@ async def handle_voice(update, context):
 
 
 async def handle_photo(update, context):
-    if not is_allowed(update): return
+    if not is_allowed(update):
+        await send_register_prompt(update); return
+    user_db = current_user(update)
+    if user_db:
+        _blocked = cost_gate(user_db["id"])
+        if _blocked:
+            await update.message.reply_text(_blocked); return
     photo = update.message.photo[-1]
     caption = (update.message.caption or "").strip()
     notice = await update.message.reply_text("📸 Analizando imagen...")
     img_path = PHOTO_DIR / f"{photo.file_id}.jpg"
-    user_db = current_user(update)
     try:
         file = await context.bot.get_file(photo.file_id)
         await file.download_to_drive(img_path)
@@ -3838,6 +4335,7 @@ def _price_search(query):
     r = None
     for _ in range(4):
         r = anthropic_client.messages.create(model=MODEL_SMART, max_tokens=1024, tools=PRICE_TOOL, messages=msgs)
+        _log_usage(r, None, MODEL_SMART, "precio")
         if r.stop_reason == "pause_turn":
             msgs = [msgs[0], {"role": "assistant", "content": r.content}]
             continue
@@ -4030,17 +4528,19 @@ async def lista_cmd(update, context):
 
 async def listas_cmd(update, context):
     if not is_allowed(update): return
+    members = household_member_ids(current_user_id(update))
+    ph = ",".join("?" for _ in members)
     with db() as c:
         rows = c.execute(
             "SELECT l.id, l.name, l.icon, l.target_date, l.recurrence, "
             "  COALESCE(SUM(CASE WHEN s.done=0 THEN 1 ELSE 0 END),0) AS pend, COUNT(s.id) AS total "
             "FROM lists l LEFT JOIN shopping_items s ON s.list_id=l.id "
-            "WHERE COALESCE(l.is_template,0)=0 "
-            "GROUP BY l.id ORDER BY l.id").fetchall()
+            f"WHERE COALESCE(l.is_template,0)=0 AND l.owner_user_id IN ({ph}) "
+            "GROUP BY l.id ORDER BY l.id", members).fetchall()
         tpls = c.execute(
             "SELECT l.name, l.icon, COUNT(s.id) AS total "
             "FROM lists l LEFT JOIN shopping_items s ON s.list_id=l.id "
-            "WHERE COALESCE(l.is_template,0)=1 GROUP BY l.id ORDER BY l.id").fetchall()
+            f"WHERE COALESCE(l.is_template,0)=1 AND l.owner_user_id IN ({ph}) GROUP BY l.id ORDER BY l.id", members).fetchall()
     if not rows and not tpls:
         await update.message.reply_text("No tenés listas todavia. Probá «agregá leche a la lista»."); return
     lines = ["🗂️ Tus listas", ""]
@@ -4316,6 +4816,7 @@ def _digest_prose(facts):
                     "a partir de estos hechos. Menciona las categorias top, cualquier anomalia, "
                     "y cerra con UN consejo concreto. Montos en ARS. Maximo 4 oraciones."),
             messages=[{"role": "user", "content": json.dumps(facts, ensure_ascii=False)}])
+        _log_usage(resp, None, MODEL_SMART, "digest")
         for block in resp.content:
             if getattr(block, "type", None) == "text" and block.text.strip():
                 return block.text.strip()
@@ -4371,6 +4872,9 @@ def main():
     app.add_handler(CommandHandler("orden", orden_cmd))
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("invitar", invitar_cmd))
+    app.add_handler(CommandHandler("familia", invitar_cmd))
+    app.add_handler(CommandHandler("vincular", vincular_cmd))
     app.add_handler(CommandHandler("buscar", buscar_cmd))
     app.add_handler(CommandHandler("tx", tx_cmd))
     app.add_handler(CommandHandler("resumen", resumen_cmd))

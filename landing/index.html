@@ -2091,29 +2091,19 @@
       return;
     }
 
-    /* ── Exit early for reduced motion ────────────────────────── */
-    if (reduced) {
-      document.querySelectorAll('.js-hide').forEach(function(el) { el.style.opacity = '1'; });
-      // Stacking words: show all rows immediately
-      document.querySelectorAll('.word-row').forEach(function(el) {
-        el.style.opacity = '1';
-        el.style.transform = 'none';
-      });
-      document.querySelectorAll('.conv-card').forEach(function(el) { el.style.opacity = '1'; });
-      var bgLayer = document.getElementById('conv-bg-layer');
-      if (bgLayer) bgLayer.style.opacity = '1';
-      var dashMockEl = document.getElementById('dash-mock');
-      if (dashMockEl) { dashMockEl.style.opacity = '1'; dashMockEl.style.transform = 'translate(-50%, -50%)'; }
-      var convHeadEl = document.getElementById('conv-headline');
-      if (convHeadEl) convHeadEl.style.opacity = '1';
-      return;
-    }
+    /* ── Reduced motion: NO matamos todo (eso dejaba la página muerta en
+       celulares con "Reducir movimiento"/"Quitar animaciones" activado, que
+       Safari y Brave leen del sistema). En su lugar degradamos: mantenemos
+       reveals suaves (fade/slide cortos, on-enter) y salteamos solo lo pesado
+       (smooth-scroll, floats infinitos, parallax de mouse, convergencia,
+       pins scrubbeados, crecimiento de la punta, loop del logo, drift de blobs).
+       Los elementos de esas secciones ya tienen fallback visible por CSS. ── */
 
     gsap.registerPlugin(ScrollTrigger);
 
     /* ── Lenis ─────────────────────────────────────────────────── */
     var lenis;
-    if (window.Lenis) {
+    if (window.Lenis && !reduced) {
       lenis = new window.Lenis({ lerp: 0.09, smoothWheel: true });
       lenis.on('scroll', ScrollTrigger.update);
       gsap.ticker.add(function(time) { lenis.raf(time * 1000); });
@@ -2122,7 +2112,7 @@
 
     /* ── Trailing circular cursor (follows the mouse with a slight lag) ── */
     var cursorEl = document.getElementById('cursor');
-    if (cursorEl && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    if (cursorEl && !reduced && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
       var curX = window.innerWidth / 2, curY = window.innerHeight / 2, tgX = curX, tgY = curY;
       window.addEventListener('mousemove', function(e) {
         tgX = e.clientX; tgY = e.clientY; cursorEl.style.opacity = '1';
@@ -2137,12 +2127,12 @@
     /* ── Hero reveals ──────────────────────────────────────────── */
     var heroEls = document.querySelectorAll('#hero .js-hide');
     gsap.fromTo(heroEls,
-      { opacity: 0, y: 36 },
+      { opacity: 0, y: reduced ? 14 : 36 },
       {
         opacity: 1, y: 0,
-        duration: 1.1,
+        duration: reduced ? 0.7 : 1.1,
         ease: 'power3.out',
-        stagger: 0.14,
+        stagger: reduced ? 0.08 : 0.14,
         delay: 0.15,
         onComplete: function() {
           heroEls.forEach(function(el) { el.classList.remove('js-hide'); });
@@ -2150,36 +2140,38 @@
       }
     );
 
-    /* ── Floating card idle float ──────────────────────────────── */
+    /* ── Floating card idle float (loop infinito → off en reduce-motion) ── */
     var fcards = document.querySelectorAll('.fcard[data-float]');
-    fcards.forEach(function(card, i) {
-      var amp = 10 + (i % 3) * 5;
-      var dur = 3.5 + i * 0.7;
-      gsap.to(card, {
-        y: amp,
-        duration: dur,
-        repeat: -1,
-        yoyo: true,
-        ease: 'sine.inOut',
-        delay: i * 0.4
-      });
-    });
-
-    /* ── Mouse parallax on hero cards ─────────────────────────── */
-    var mParallax = { x: 0, y: 0 };
-    document.addEventListener('mousemove', function(e) {
-      mParallax.x = (e.clientX / window.innerWidth - 0.5) * 2;
-      mParallax.y = (e.clientY / window.innerHeight - 0.5) * 2;
+    if (!reduced) {
       fcards.forEach(function(card, i) {
-        var depth = 0.4 + (i % 3) * 0.3;
+        var amp = 10 + (i % 3) * 5;
+        var dur = 3.5 + i * 0.7;
         gsap.to(card, {
-          x: mParallax.x * 18 * depth,
-          duration: 1.4,
-          ease: 'power2.out',
-          overwrite: 'auto'
+          y: amp,
+          duration: dur,
+          repeat: -1,
+          yoyo: true,
+          ease: 'sine.inOut',
+          delay: i * 0.4
         });
       });
-    });
+
+      /* ── Mouse parallax on hero cards (no aplica en touch) ───── */
+      var mParallax = { x: 0, y: 0 };
+      document.addEventListener('mousemove', function(e) {
+        mParallax.x = (e.clientX / window.innerWidth - 0.5) * 2;
+        mParallax.y = (e.clientY / window.innerHeight - 0.5) * 2;
+        fcards.forEach(function(card, i) {
+          var depth = 0.4 + (i % 3) * 0.3;
+          gsap.to(card, {
+            x: mParallax.x * 18 * depth,
+            duration: 1.4,
+            ease: 'power2.out',
+            overwrite: 'auto'
+          });
+        });
+      });
+    }
 
     /* ── Convergence section ───────────────────────────────────── */
     var convSection = document.getElementById('convergence');
@@ -2201,6 +2193,8 @@
     gsap.set(convBgLayer, { opacity: 1 });
 
     // NO pin → no empty viewport. Cards converge as the section scrolls through.
+    // En reduce-motion las cards quedan visibles en su lugar (sin converger).
+    if (!reduced) {
     var convTl = gsap.timeline({
       scrollTrigger: {
         trigger: convSection,
@@ -2241,6 +2235,7 @@
         ease: 'power2.inOut'
       }, 0.1 + i * 0.05);
     });
+    } // /if (!reduced) — convergencia
 
     /* ── 3 words rise one-by-one as the section scrolls past (scrubbed, NO pin) ── */
     var wordPin  = document.getElementById('words-pin');
@@ -2249,17 +2244,27 @@
       document.getElementById('ws-2'),
       document.getElementById('ws-3')
     ];
-    gsap.set(wordRows, { opacity: 0, y: 60 });
-    var wordTl = gsap.timeline({
-      scrollTrigger: { trigger: wordPin, start: 'top 85%', end: 'top 22%', scrub: 1 }
-    });
-    wordTl.to(wordRows[0], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.0)
-          .to(wordRows[1], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.33)
-          .to(wordRows[2], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.66);
+    gsap.set(wordRows, { opacity: 0, y: reduced ? 24 : 60 });
+    if (reduced) {
+      wordRows.forEach(function(r) {
+        if (!r) return;
+        ScrollTrigger.create({
+          trigger: r, start: 'top 90%', once: true,
+          onEnter: function() { gsap.to(r, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }); }
+        });
+      });
+    } else {
+      var wordTl = gsap.timeline({
+        scrollTrigger: { trigger: wordPin, start: 'top 85%', end: 'top 22%', scrub: 1 }
+      });
+      wordTl.to(wordRows[0], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.0)
+            .to(wordRows[1], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.33)
+            .to(wordRows[2], { opacity: 1, y: 0, ease: 'back.out(1.4)', duration: 0.4 }, 0.66);
+    }
 
     /* ── Manifiesto: big words rise + fade in on scroll (full color) ── */
     var mfLines = gsap.utils.toArray('#manifiesto .mf-line');
-    if (mfLines.length) {
+    if (mfLines.length && !reduced) {
       gsap.set(mfLines, { opacity: 0.18, y: 60 });
       var mfTl = gsap.timeline({
         scrollTrigger: {
@@ -2275,7 +2280,7 @@
     /* ── Punta: green triangle grows to fill the whole screen, then text in ── */
     var puntaFill = document.getElementById('punta-fill');
     var puntaContent = document.getElementById('punta-content');
-    if (puntaFill) {
+    if (puntaFill && !reduced) {
       gsap.set(puntaFill, { clipPath: 'polygon(0% 0%, 100% 0%, 50% 38%, 50% 38%)' });
       gsap.set(puntaContent, { opacity: 0, y: 36 });
       var puntaTl = gsap.timeline({
@@ -2431,12 +2436,14 @@
     });
 
     /* ── Ambient blob parallax (drift on scroll, distinct rates) ── */
-    [['.blob-1', 180], ['.blob-2', -220], ['.blob-3', 160]].forEach(function(pair) {
-      gsap.to(pair[0], {
-        y: pair[1], ease: 'none',
-        scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 2 }
+    if (!reduced) {
+      [['.blob-1', 180], ['.blob-2', -220], ['.blob-3', 160]].forEach(function(pair) {
+        gsap.to(pair[0], {
+          y: pair[1], ease: 'none',
+          scrollTrigger: { trigger: document.body, start: 'top top', end: 'bottom bottom', scrub: 2 }
+        });
       });
-    });
+    }
 
 
     /* ── Capacidades: slide in from the left, elastic stagger ─────── */

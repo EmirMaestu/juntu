@@ -121,14 +121,14 @@ def patch_table(conn, table: str, row_id: int, fields: dict):
 
 
 def assert_ownership(conn, table, row_id, user_id, allow_shared=False):
-    """Tira 403 si la fila existe pero pertenece a otro usuario.
-    Si allow_shared=True y la tabla tiene columna `shared`, permite tambien
-    items marcados como compartidos."""
+    """Tira 403 si la fila no es del usuario. Si allow_shared=True, permite items
+    `shared=1` SOLO si su dueño pertenece al MISMO HOGAR (aislamiento multi-inquilino).
+    `user_id NULL` (legacy/huérfano) ya NO se permite a cualquiera."""
     row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (row_id,)).fetchone()
     if not row: raise HTTPException(404, f"{table} #{row_id} no existe")
     uid = row["user_id"] if "user_id" in row.keys() else None
-    if uid is None or uid == user_id: return
-    if allow_shared and "shared" in row.keys() and row["shared"]:
+    if uid is not None and uid == user_id: return
+    if allow_shared and "shared" in row.keys() and row["shared"] and uid in _hh_member_ids(conn, user_id):
         return
     raise HTTPException(403, f"{table} #{row_id} no es tuyo")
 
@@ -351,6 +351,7 @@ def patch_habito(habito_id: int, h: HabitoPatch, user=Depends(require_user_crud)
 class NotaPatch(BaseModel):
     text: Optional[str] = None
     tags: Optional[list] = None
+    description: Optional[str] = None
 
 
 @router.patch("/notas/{nota_id}")
@@ -358,7 +359,8 @@ def patch_nota(nota_id: int, n: NotaPatch, user=Depends(require_user_crud)):
     with db() as conn:
         assert_ownership(conn, "notas", nota_id, user["id"], allow_shared=True)
         fields = {"text": n.text,
-                  "tags": json.dumps(n.tags, ensure_ascii=False) if n.tags is not None else None}
+                  "tags": json.dumps(n.tags, ensure_ascii=False) if n.tags is not None else None,
+                  "description": n.description}
         patch_table(conn, "notas", nota_id, fields)
         audit(conn, "notas", nota_id, "update", "", user["id"])
         conn.commit()
@@ -373,7 +375,7 @@ def restore(trash_id: int, user=Depends(require_user_crud)):
         row = conn.execute("SELECT * FROM trash WHERE id=?", (trash_id,)).fetchone()
         if not row:
             raise HTTPException(404, "No está en la papelera")
-        if row["user_id"] is not None and row["user_id"] != user["id"]:
+        if row["user_id"] not in _hh_member_ids(conn, user["id"]):
             raise HTTPException(403, "No es tuyo")
         table = TRASHABLE[row["entity"]]
         data = json.loads(row["payload"])
@@ -397,9 +399,9 @@ def soft_delete(entity: str, item_id: int, user=Depends(require_user_crud)):
         row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(404, f"{entity} #{item_id} no existe")
-        # ownership check
+        # ownership check (propio o del hogar; NULL/otro hogar = 403)
         owner = row["user_id"] if "user_id" in row.keys() else None
-        if owner is not None and owner != user["id"]:
+        if owner not in _hh_member_ids(conn, user["id"]):
             raise HTTPException(403, f"{entity} #{item_id} no es tuyo")
         payload = json.dumps(dict(row), ensure_ascii=False)
         cur = conn.execute(
@@ -415,10 +417,11 @@ def soft_delete(entity: str, item_id: int, user=Depends(require_user_crud)):
 @router.get("/trash")
 def list_trash(limit: int = 50, user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
         rows = conn.execute(
-            "SELECT id, entity, original_id, payload, deleted_at, user_id FROM trash "
-            "WHERE user_id IS NULL OR user_id=? ORDER BY id DESC LIMIT ?",
-            (user["id"], limit),
+            f"SELECT id, entity, original_id, payload, deleted_at, user_id FROM trash "
+            f"WHERE user_id IN ({ph}) ORDER BY id DESC LIMIT ?",
+            (*members, limit),
         ).fetchall()
         out = []
         for r in rows:
@@ -431,9 +434,10 @@ def list_trash(limit: int = 50, user=Depends(require_user_crud)):
 @router.get("/audit")
 def list_audit(limit: int = 50, user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
         rows = conn.execute(
-            "SELECT * FROM audit_log WHERE user_id IS NULL OR user_id=? ORDER BY id DESC LIMIT ?",
-            (user["id"], limit)).fetchall()
+            f"SELECT * FROM audit_log WHERE user_id IN ({ph}) ORDER BY id DESC LIMIT ?",
+            (*members, limit)).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -532,12 +536,25 @@ class ItemIn(BaseModel):
     text: str
 
 
+def _hh_member_ids(conn, uid):
+    """IDs del hogar de uid (incl. uid). Aislamiento multi-inquilino."""
+    try:
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM users WHERE COALESCE(household_id,id)=(SELECT COALESCE(household_id,id) FROM users WHERE id=?)",
+            (uid,)).fetchall()]
+        return ids or [uid]
+    except Exception:
+        return [uid]
+
+
 @router.get("/listas")
 def get_listas(user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"])
+        ph = ",".join("?" for _ in members)
         lists = conn.execute(
             "SELECT id, name, icon, kind, target_date, recurrence FROM lists "
-            "WHERE COALESCE(is_template,0)=0 ORDER BY id"
+            f"WHERE COALESCE(is_template,0)=0 AND owner_user_id IN ({ph}) ORDER BY id", members
         ).fetchall()
         out = []
         for l in lists:
@@ -563,7 +580,9 @@ def create_lista(l: ListaIn, user=Depends(require_user_crud)):
         raise HTTPException(400, "Nombre requerido")
     q = _norm_list_name(name)
     with db() as conn:
-        for row in conn.execute("SELECT id, name FROM lists WHERE COALESCE(is_template,0)=0").fetchall():
+        members = _hh_member_ids(conn, user["id"])
+        ph = ",".join("?" for _ in members)
+        for row in conn.execute(f"SELECT id, name FROM lists WHERE COALESCE(is_template,0)=0 AND owner_user_id IN ({ph})", members).fetchall():
             if _norm_list_name(row["name"]) == q:
                 return {"id": row["id"], "ok": True}
         cur = conn.execute(
@@ -578,6 +597,9 @@ def create_lista(l: ListaIn, user=Depends(require_user_crud)):
 @router.delete("/listas/{lid}")
 def delete_lista(lid: int, user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        if not conn.execute(f"SELECT 1 FROM lists WHERE id=? AND owner_user_id IN ({ph})", [lid] + members).fetchone():
+            raise HTTPException(404, "Lista no existe")
         conn.execute("DELETE FROM shopping_items WHERE list_id=?", (lid,))
         conn.execute("DELETE FROM lists WHERE id=?", (lid,))
         audit(conn, "lists", lid, "delete", "", user["id"])
@@ -591,7 +613,8 @@ def add_list_item(lid: int, it: ItemIn, user=Depends(require_user_crud)):
     if not text:
         raise HTTPException(400, "Texto requerido")
     with db() as conn:
-        if not conn.execute("SELECT 1 FROM lists WHERE id=?", (lid,)).fetchone():
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        if not conn.execute(f"SELECT 1 FROM lists WHERE id=? AND owner_user_id IN ({ph})", [lid] + members).fetchone():
             raise HTTPException(404, "Lista no existe")
         p = shopping.parse_item(text)
         cat = shopping.aisle(p["text"])
@@ -607,7 +630,10 @@ def add_list_item(lid: int, it: ItemIn, user=Depends(require_user_crud)):
 @router.post("/listas/items/{iid}/toggle")
 def toggle_list_item(iid: int, user=Depends(require_user_crud)):
     with db() as conn:
-        row = conn.execute("SELECT done FROM shopping_items WHERE id=?", (iid,)).fetchone()
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        row = conn.execute(
+            f"SELECT s.done FROM shopping_items s JOIN lists l ON l.id=s.list_id "
+            f"WHERE s.id=? AND l.owner_user_id IN ({ph})", [iid] + members).fetchone()
         if not row:
             raise HTTPException(404, "Item no existe")
         new_done = 0 if row["done"] else 1
@@ -622,7 +648,10 @@ def toggle_list_item(iid: int, user=Depends(require_user_crud)):
 @router.delete("/listas/items/{iid}")
 def delete_list_item(iid: int, user=Depends(require_user_crud)):
     with db() as conn:
-        conn.execute("DELETE FROM shopping_items WHERE id=?", (iid,))
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        conn.execute(
+            f"DELETE FROM shopping_items WHERE id=? AND list_id IN "
+            f"(SELECT id FROM lists WHERE owner_user_id IN ({ph}))", [iid] + members)
         conn.commit()
     return {"ok": True}
 
@@ -630,7 +659,10 @@ def delete_list_item(iid: int, user=Depends(require_user_crud)):
 @router.post("/listas/{lid}/clear")
 def clear_list_done(lid: int, user=Depends(require_user_crud)):
     with db() as conn:
-        cur = conn.execute("DELETE FROM shopping_items WHERE list_id=? AND done=1", (lid,))
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        cur = conn.execute(
+            f"DELETE FROM shopping_items WHERE list_id=? AND done=1 AND list_id IN "
+            f"(SELECT id FROM lists WHERE owner_user_id IN ({ph}))", [lid] + members)
         conn.commit()
     return {"removed": cur.rowcount, "ok": True}
 
@@ -638,8 +670,10 @@ def clear_list_done(lid: int, user=Depends(require_user_crud)):
 @router.post("/listas/{lid}/buy-all")
 def buy_all_items(lid: int, user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
         cur = conn.execute(
-            "UPDATE shopping_items SET done=1, done_at=datetime('now') WHERE list_id=? AND done=0", (lid,))
+            f"UPDATE shopping_items SET done=1, done_at=datetime('now') WHERE list_id=? AND done=0 "
+            f"AND list_id IN (SELECT id FROM lists WHERE owner_user_id IN ({ph}))", [lid] + members)
         conn.commit()
     return {"marked": cur.rowcount, "ok": True}
 
@@ -655,9 +689,10 @@ class UseTemplateIn(BaseModel):
     target_list_id: Optional[int] = None
 
 
-def _find_template_id(conn, name):
+def _find_template_id(conn, name, members):
     q = _norm_list_name(name)
-    for r in conn.execute("SELECT id, name FROM lists WHERE COALESCE(is_template,0)=1").fetchall():
+    ph = ",".join("?" for _ in members)
+    for r in conn.execute(f"SELECT id, name FROM lists WHERE COALESCE(is_template,0)=1 AND owner_user_id IN ({ph})", members).fetchall():
         if _norm_list_name(r["name"]) == q:
             return r["id"]
     return None
@@ -666,17 +701,19 @@ def _find_template_id(conn, name):
 @router.get("/listas/templates")
 def list_templates(user=Depends(require_user_crud)):
     with db() as conn:
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
         rows = conn.execute(
             "SELECT l.id, l.name, l.icon, COUNT(s.id) AS total "
             "FROM lists l LEFT JOIN shopping_items s ON s.list_id=l.id "
-            "WHERE COALESCE(l.is_template,0)=1 GROUP BY l.id ORDER BY l.id").fetchall()
+            f"WHERE COALESCE(l.is_template,0)=1 AND l.owner_user_id IN ({ph}) GROUP BY l.id ORDER BY l.id", members).fetchall()
     return {"templates": [dict(r) for r in rows]}
 
 
 @router.post("/listas/{lid}/save-template")
 def save_as_template(lid: int, b: SaveTemplateIn, user=Depends(require_user_crud)):
     with db() as conn:
-        src = conn.execute("SELECT id, name FROM lists WHERE id=?", (lid,)).fetchone()
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        src = conn.execute(f"SELECT id, name FROM lists WHERE id=? AND owner_user_id IN ({ph})", [lid] + members).fetchone()
         if not src:
             raise HTTPException(404, "Lista no existe")
         name = (b.name or src["name"] or "").strip()
@@ -686,7 +723,7 @@ def save_as_template(lid: int, b: SaveTemplateIn, user=Depends(require_user_crud
             "SELECT text, qty, unit, category, note FROM shopping_items WHERE list_id=?", (lid,)).fetchall()
         if not items:
             raise HTTPException(400, "La lista está vacía")
-        tpl_id = _find_template_id(conn, name)
+        tpl_id = _find_template_id(conn, name, members)
         if tpl_id:
             conn.execute("DELETE FROM shopping_items WHERE list_id=?", (tpl_id,))
         else:
@@ -707,13 +744,17 @@ def save_as_template(lid: int, b: SaveTemplateIn, user=Depends(require_user_crud
 @router.post("/listas/use-template")
 def instantiate_template(b: UseTemplateIn, user=Depends(require_user_crud)):
     with db() as conn:
-        tpl_id = _find_template_id(conn, b.name)
+        members = _hh_member_ids(conn, user["id"]); ph = ",".join("?" for _ in members)
+        tpl_id = _find_template_id(conn, b.name, members)
         if not tpl_id:
             raise HTTPException(404, "Plantilla no existe")
         target_id = b.target_list_id
+        if target_id and not conn.execute(
+                f"SELECT 1 FROM lists WHERE id=? AND owner_user_id IN ({ph})", [target_id] + members).fetchone():
+            raise HTTPException(404, "Lista destino no existe")
         if not target_id:
-            d = (conn.execute("SELECT id FROM lists WHERE name='Súper' LIMIT 1").fetchone()
-                 or conn.execute("SELECT id FROM lists WHERE COALESCE(is_template,0)=0 ORDER BY id LIMIT 1").fetchone())
+            d = (conn.execute(f"SELECT id FROM lists WHERE name='Súper' AND owner_user_id IN ({ph}) LIMIT 1", members).fetchone()
+                 or conn.execute(f"SELECT id FROM lists WHERE COALESCE(is_template,0)=0 AND owner_user_id IN ({ph}) ORDER BY id LIMIT 1", members).fetchone())
             if not d:
                 raise HTTPException(400, "No hay lista destino")
             target_id = d["id"]

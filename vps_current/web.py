@@ -7,12 +7,17 @@ Dashboard web multi-usuario.
 """
 
 import os
+import re
 import csv
 import json
+import hmac
+import asyncio
+import threading
 import sqlite3
 import secrets
 import hashlib
 import urllib.request
+import urllib.parse
 import time as _time
 import io
 from contextlib import contextmanager
@@ -20,8 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Body, Request, Response, Cookie, Depends
-from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Body, Request, Response, Cookie, Depends, BackgroundTasks
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from crud_v2 import router as crud_v2_router, init_crud_v2
 # # >>> vencimientos patch
 import vencimientos
@@ -62,10 +67,46 @@ SESSIONS = {}  # token -> {"user_id": int, "expires": datetime}
 SESSION_TTL = timedelta(days=30)
 
 
+PBKDF2_ITERS = 200_000
+
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ITERS).hex()
+    return f"pbkdf2${PBKDF2_ITERS}${salt}${h}"
+
 def verify_password(password, stored):
-    if not stored or "$" not in stored: return False
+    """Acepta PBKDF2 (nuevo) y sha256 salteado (legacy) para migración gradual."""
+    if not stored: return False
+    if stored.startswith("pbkdf2$"):
+        try:
+            _, iters, salt, h = stored.split("$", 3)
+            calc = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(iters)).hex()
+            return secrets.compare_digest(calc, h)
+        except Exception:
+            return False
+    if "$" not in stored: return False  # legacy: salt$sha256(salt+pw)
     salt, h = stored.split("$", 1)
-    return hashlib.sha256((salt + password).encode()).hexdigest() == h
+    return secrets.compare_digest(hashlib.sha256((salt + password).encode()).hexdigest(), h)
+
+def password_needs_upgrade(stored):
+    return bool(stored) and not stored.startswith("pbkdf2$")
+
+
+# --- Rate limiting en memoria (sliding window por clave) -----------------
+_RL_HITS = {}  # key -> [timestamps]
+
+def _client_ip(request):
+    xff = request.headers.get("x-forwarded-for") if request else None
+    if xff: return xff.split(",")[0].strip()
+    return (request.client.host if request and request.client else "unknown")
+
+def rate_limit(key, max_hits, window_secs):
+    """True si se superó el límite (debe rechazarse)."""
+    now = datetime.now().timestamp()
+    bucket = [t for t in _RL_HITS.get(key, []) if now - t < window_secs]
+    bucket.append(now)
+    _RL_HITS[key] = bucket[-max_hits * 2:]  # acota el crecimiento
+    return len(bucket) > max_hits
 
 
 def _purge_sessions():
@@ -91,6 +132,55 @@ def require_user(session: str = Cookie(None)):
     return u
 
 
+# ─── Admin ────────────────────────────────────────────────────────────────
+# Admin = telegram_id en ADMIN_USER_IDS. Fallback a ALLOWED_USER_IDS (la pareja)
+# para que el panel funcione ya, sin config extra. Para restringir a una sola
+# persona, setear ADMIN_USER_IDS en el .env.
+_admin_raw = (os.environ.get("ADMIN_USER_IDS", "").strip()
+              or os.environ.get("ALLOWED_USER_IDS", "").strip()
+              or os.environ.get("ALLOWED_USER_ID", "").strip())
+ADMIN_USER_IDS = [int(x.strip()) for x in _admin_raw.split(",") if x.strip()]
+# Topes (mismos defaults que el bot; solo para mostrarlos en el panel).
+DAILY_GLOBAL_CAP_USD = float(os.environ.get("DAILY_GLOBAL_CAP_USD", "5") or 5)
+FREE_DAILY_MSGS = int(os.environ.get("FREE_DAILY_MSGS", "15") or 15)
+# Usuario del bot de Telegram, para armar los links de invitación (t.me/<bot>?start=<code>).
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "").strip().lstrip("@")
+APP_URL = os.environ.get("APP_URL", "https://asistente.emir-maestu.site/app").rstrip("/")
+
+# WhatsApp Cloud API (Meta)
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
+WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "").strip().lstrip("+")
+_WA_GRAPH = "https://graph.facebook.com/v21.0"
+_wa_seen = set()  # dedupe de message ids (en memoria)
+
+
+def is_admin(user):
+    return bool(user) and user.get("telegram_id") in ADMIN_USER_IDS
+
+
+def require_admin(user=Depends(require_user)):
+    if not is_admin(user): raise HTTPException(403, "Solo administradores")
+    return user
+
+
+def _table_exists(conn, table):
+    try:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+    except Exception:
+        return False
+
+
+def _col_exists(conn, table, col):
+    try:
+        return any(r[1] == col for r in conn.execute(f"PRAGMA table_info({table})").fetchall())
+    except Exception:
+        return False
+
+
 def get_user_by_name(name):
     if not name: return None
     with db() as conn:
@@ -103,28 +193,57 @@ def get_user_by_name(name):
     return None
 
 
+def _household_member_ids(uid):
+    """IDs de usuarios del MISMO hogar que uid (incl. uid). Aislamiento multi-inquilino."""
+    if uid is None:
+        return []
+    try:
+        with db() as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM users WHERE COALESCE(household_id,id)=(SELECT COALESCE(household_id,id) FROM users WHERE id=?)",
+                (uid,)).fetchall()]
+        return ids or [uid]
+    except Exception:
+        return [uid]
+
+
+def _household_id_of(user):
+    """ID canónico del hogar del usuario (COALESCE(household_id, id))."""
+    try:
+        hh = user["household_id"] if "household_id" in user.keys() else None
+    except Exception:
+        hh = None
+    return hh or user["id"]
+
+
 def resolve_scope_uid(scope_cookie, user):
-    """Devuelve user_id a usar para filtrar, o None si es 'compartido'."""
+    """Devuelve user_id a filtrar, o None = TODO MI HOGAR. Aislamiento: 'compartido' en un
+    hogar de 1 sola persona = uno mismo; 'user:X' solo si X pertenece a mi hogar."""
     s = (scope_cookie or "mine").strip().lower()
-    if s in ("ours","shared","ambos","compartido","both"): return None
+    members = _household_member_ids(user["id"])
+    if s in ("ours","shared","ambos","compartido","both"):
+        return None if len(members) > 1 else user["id"]
     if s.startswith("user:"):
         u = get_user_by_name(s.split(":",1)[1])
-        if u: return u["id"]
+        if u and u["id"] in members:
+            return u["id"]
     return user["id"]
 
 
 def user_filter(scope_cookie, user, alias="t"):
-    """Returns ("AND alias.user_id = ?", [uid]) tuple or ("", [])."""
+    """Filtro de usuario. scope_uid None ("ambos") = MI HOGAR (no global)."""
     uid = resolve_scope_uid(scope_cookie, user)
-    if uid is None: return "", []
-    return f"AND {alias}.user_id = ?", [uid]
+    if uid is not None: return f"AND {alias}.user_id = ?", [uid]
+    m = _household_member_ids(user["id"]); ph = ",".join("?" for _ in m)
+    return f"AND {alias}.user_id IN ({ph})", list(m)
 
 
 def user_filter_eq(scope_cookie, user, col="user_id"):
-    """For simple WHERE col=? cases."""
+    """For simple WHERE col=? cases. scope_uid None ("ambos") = MI HOGAR."""
     uid = resolve_scope_uid(scope_cookie, user)
-    if uid is None: return "", []
-    return f"AND {col} = ?", [uid]
+    if uid is not None: return f"AND {col} = ?", [uid]
+    m = _household_member_ids(user["id"]); ph = ",".join("?" for _ in m)
+    return f"AND {col} IN ({ph})", list(m)
 
 
 # ─── Login / Logout ───────────────────────────────────────────────────────
@@ -173,15 +292,21 @@ def login_page(session: str = Cookie(None)):
 
 
 @app.post("/login")
-def login(body: dict = Body(...), response: Response = None):
+def login(request: Request, body: dict = Body(...), response: Response = None):
+    ip = _client_ip(request)
     username = (body.get("username") or "").strip().lower()
     password = body.get("password") or ""
     if not username or not password:
         raise HTTPException(400, "Faltan datos")
+    # Anti fuerza-bruta: por IP y por usuario.
+    if rate_limit(f"login:ip:{ip}", 10, 300) or rate_limit(f"login:user:{username}", 6, 300):
+        raise HTTPException(429, "Demasiados intentos. Esperá unos minutos.")
     with db() as conn:
         row = conn.execute("SELECT * FROM users WHERE LOWER(username)=? AND active=1", (username,)).fetchone()
-    if not row or not verify_password(password, row["password_hash"]):
-        raise HTTPException(401, "Usuario o contraseña incorrectos")
+        if not row or not verify_password(password, row["password_hash"]):
+            raise HTTPException(401, "Usuario o contraseña incorrectos")
+        if password_needs_upgrade(row["password_hash"]):  # migra sha256 → pbkdf2
+            conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(password), row["id"])); conn.commit()
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = {"user_id": row["id"], "expires": datetime.now() + SESSION_TTL}
     resp = JSONResponse({"ok": True, "name": row["name"]})
@@ -201,13 +326,15 @@ def logout(session: str = Cookie(None)):
 
 @app.get("/api/me")
 def api_me(user=Depends(require_user), scope: str = Cookie("mine")):
+    members = set(_household_member_ids(user["id"]))  # solo mi hogar (aislamiento)
     with db() as conn:
         all_users = [dict(r) for r in conn.execute("SELECT id,name,username,color FROM users WHERE active=1 ORDER BY id").fetchall()]
-    other = [u for u in all_users if u["id"] != user["id"]]
+    other = [u for u in all_users if u["id"] != user["id"] and u["id"] in members]
     return {
         "id": user["id"], "name": user["name"], "username": user["username"], "color": user.get("color"),
         "scope": scope or "mine",
         "others": [{"name": u["name"], "scope_value": f"user:{u['name']}"} for u in other],
+        "is_admin": is_admin(user),
     }
 
 
@@ -219,22 +346,364 @@ def set_scope(body: dict = Body(...), user=Depends(require_user)):
     return resp
 
 
+# ─── Admin: usuarios, costos, uso ───────────────────────────────────────────
+@app.get("/api/admin/overview")
+def api_admin_overview(user=Depends(require_admin)):
+    out = {
+        "users_total": 0, "users_active": 0,
+        "cost_today": 0.0, "cost_month": 0.0,
+        "msgs_today": 0, "calls_today": 0,
+        "by_model": [], "by_kind": [],
+        "caps": {"daily_global_usd": DAILY_GLOBAL_CAP_USD, "free_daily_msgs": FREE_DAILY_MSGS},
+        "usage_ready": False,
+    }
+    with db() as conn:
+        try:
+            out["users_total"] = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            out["users_active"] = conn.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
+        except Exception:
+            pass
+        if _table_exists(conn, "api_usage"):
+            out["usage_ready"] = True
+            q = lambda sql: conn.execute(sql).fetchone()[0]
+            out["cost_today"] = q("SELECT COALESCE(SUM(cost_usd),0) FROM api_usage WHERE date(created_at)=date('now')")
+            out["cost_month"] = q("SELECT COALESCE(SUM(cost_usd),0) FROM api_usage WHERE strftime('%Y-%m',created_at)=strftime('%Y-%m','now')")
+            out["msgs_today"] = q("SELECT COUNT(*) FROM api_usage WHERE kind='parser' AND date(created_at)=date('now')")
+            out["calls_today"] = q("SELECT COUNT(*) FROM api_usage WHERE date(created_at)=date('now')")
+            out["by_model"] = [dict(r) for r in conn.execute(
+                "SELECT model, COUNT(*) AS calls, COALESCE(SUM(input_tokens),0) AS input_tokens, "
+                "COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(cache_read),0) AS cache_read, "
+                "COALESCE(SUM(cost_usd),0) AS cost_usd FROM api_usage "
+                "WHERE strftime('%Y-%m',created_at)=strftime('%Y-%m','now') "
+                "GROUP BY model ORDER BY cost_usd DESC").fetchall()]
+            out["by_kind"] = [dict(r) for r in conn.execute(
+                "SELECT kind, COUNT(*) AS calls, COALESCE(SUM(cost_usd),0) AS cost_usd FROM api_usage "
+                "WHERE strftime('%Y-%m',created_at)=strftime('%Y-%m','now') "
+                "GROUP BY kind ORDER BY cost_usd DESC").fetchall()]
+    return out
+
+
+@app.get("/api/admin/users")
+def api_admin_users(user=Depends(require_admin)):
+    with db() as conn:
+        has_plan = _col_exists(conn, "users", "plan")
+        plan_sel = "COALESCE(plan,'free')" if has_plan else "'free'"
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, name, username, telegram_id, active, created_at, {plan_sel} AS plan "
+            "FROM users ORDER BY id").fetchall()]
+        usage_ready = _table_exists(conn, "api_usage")
+        for r in rows:
+            r["is_admin"] = r.get("telegram_id") in ADMIN_USER_IDS
+            r["msgs_today"] = 0
+            r["cost_month"] = 0.0
+            if usage_ready:
+                r["msgs_today"] = conn.execute(
+                    "SELECT COUNT(*) FROM api_usage WHERE user_id=? AND kind='parser' AND date(created_at)=date('now')",
+                    (r["id"],)).fetchone()[0]
+                r["cost_month"] = conn.execute(
+                    "SELECT COALESCE(SUM(cost_usd),0) FROM api_usage WHERE user_id=? "
+                    "AND strftime('%Y-%m',created_at)=strftime('%Y-%m','now')",
+                    (r["id"],)).fetchone()[0]
+    return {"users": rows, "usage_ready": usage_ready, "plans": ["free", "pareja", "pro"]}
+
+
+@app.patch("/api/admin/users/{uid}")
+def api_admin_user_update(uid: int, body: dict = Body(...), user=Depends(require_admin)):
+    sets, vals = [], []
+    if "plan" in body:
+        plan = (body.get("plan") or "free").strip().lower()
+        if plan not in ("free", "pareja", "pro"): raise HTTPException(400, "Plan inválido")
+        sets.append("plan=?"); vals.append(plan)
+    if "active" in body:
+        if not body.get("active") and uid == user["id"]:
+            raise HTTPException(400, "No podés desactivarte a vos mismo")
+        sets.append("active=?"); vals.append(1 if body.get("active") else 0)
+    if not sets: raise HTTPException(400, "Nada para actualizar")
+    with db() as conn:
+        if "plan" in body and not _col_exists(conn, "users", "plan"):
+            raise HTTPException(409, "La columna 'plan' aún no existe; reiniciá el bot.")
+        vals.append(uid)
+        conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/usage")
+def api_admin_usage(days: int = 14, user=Depends(require_admin)):
+    days = max(1, min(days, 90))
+    with db() as conn:
+        if not _table_exists(conn, "api_usage"):
+            return {"days": [], "usage_ready": False}
+        rows = [dict(r) for r in conn.execute(
+            "SELECT date(created_at) AS day, COALESCE(SUM(cost_usd),0) AS cost_usd, COUNT(*) AS calls "
+            "FROM api_usage WHERE created_at >= date('now', ?) GROUP BY day ORDER BY day",
+            (f"-{days} days",)).fetchall()]
+    return {"days": rows, "usage_ready": True}
+
+
+@app.get("/api/admin/referrals")
+def api_admin_referrals(user=Depends(require_admin)):
+    with db() as conn:
+        if not _col_exists(conn, "users", "referral_code"):
+            return {"ready": False, "users": [], "bot_username": BOT_USERNAME}
+        users = [dict(r) for r in conn.execute(
+            "SELECT id, name, username, referral_code, referred_by, active FROM users ORDER BY id").fetchall()]
+        counts = {}
+        for r in conn.execute(
+                "SELECT referred_by AS rb, COUNT(*) AS c FROM users "
+                "WHERE referred_by IS NOT NULL GROUP BY referred_by").fetchall():
+            counts[r["rb"]] = r["c"]
+    names = {u["id"]: u["name"] for u in users}
+    out = []
+    for u in users:
+        link = (f"https://t.me/{BOT_USERNAME}?start={u['referral_code']}"
+                if BOT_USERNAME and u["referral_code"] else None)
+        wa = None
+        if WHATSAPP_NUMBER and u["referral_code"]:
+            _txt = urllib.parse.quote(f"Hola! Me uno a Yumi 🌱 (codigo: {u['referral_code']})")
+            wa = f"https://wa.me/{WHATSAPP_NUMBER}?text={_txt}"
+        out.append({
+            "id": u["id"], "name": u["name"], "username": u["username"],
+            "referral_code": u["referral_code"], "invite_link": link, "invite_link_wa": wa,
+            "invited_count": counts.get(u["id"], 0),
+            "referred_by_name": names.get(u["referred_by"]) if u["referred_by"] else None,
+        })
+    return {"ready": True, "users": out, "bot_username": BOT_USERNAME}
+
+
+@app.get("/api/admin/households")
+def api_admin_households(user=Depends(require_admin)):
+    """Usuarios agrupados por hogar (familia), con el plan del hogar, su tope y cuántos integrantes tiene."""
+    try:
+        import main as _m
+        rank = _m.PLAN_RANK
+        cap_for = lambda p: _m.plan_limits(p)["household"]
+        msgs_for = lambda p: _m.plan_limits(p)["msgs"]
+    except Exception:
+        rank = {"free": 0, "pareja": 1, "pro": 2}
+        cap_for = lambda p: {"free": 1, "pareja": 2, "pro": 6}.get(p, 1)
+        msgs_for = lambda p: {"free": 15, "pareja": 150, "pro": 100000}.get(p, 15)
+    with db() as conn:
+        has_hh = _col_exists(conn, "users", "household_id")
+        sel = "COALESCE(household_id, id)" if has_hh else "id"
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, name, username, COALESCE(plan,'free') AS plan, {sel} AS hh, active "
+            f"FROM users ORDER BY {sel}, id").fetchall()]
+    groups, order = {}, []
+    for r in rows:
+        if r["hh"] not in groups:
+            groups[r["hh"]] = []; order.append(r["hh"])
+        groups[r["hh"]].append(r)
+    out = []
+    for hh in order:
+        members = groups[hh]
+        best = max((m["plan"] for m in members), key=lambda p: rank.get(p, 0))
+        out.append({
+            "household_id": hh, "plan": best, "cap": cap_for(best),
+            "daily_msgs": msgs_for(best), "size": len(members),
+            "members": [{"id": m["id"], "name": m["name"], "username": m["username"],
+                         "plan": m["plan"], "active": m["active"]} for m in members],
+        })
+    return {"households": out}
+
+
+# ─── WhatsApp Cloud API: webhook + envío ────────────────────────────────────
+def wa_send(to, text):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID and to and text):
+        return
+    body = json.dumps({"messaging_product": "whatsapp", "to": str(to),
+                       "type": "text", "text": {"body": str(text)[:4096]}}).encode()
+    req = urllib.request.Request(
+        f"{_WA_GRAPH}/{WHATSAPP_PHONE_NUMBER_ID}/messages", data=body, method="POST",
+        headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+    except Exception as e:
+        print("wa_send fail:", e)
+
+
+# Shim mínimo: hace que main.process_text (que espera update/context de Telegram)
+# funcione para WhatsApp, ruteando las respuestas a wa_send.
+class _WAUser:
+    def __init__(self, uid, name): self.id = uid; self.first_name = name; self.username = None
+class _WAMessage:
+    def __init__(self, to, text): self._to = to; self.text = text; self.caption = None
+    async def reply_text(self, text, **kwargs): wa_send(self._to, text)
+class _WAUpdate:
+    def __init__(self, uid, name, to, text):
+        self.effective_user = _WAUser(uid, name); self.message = _WAMessage(to, text)
+class _WAJobQueue:
+    def run_once(self, *a, **k): return None
+    def get_jobs_by_name(self, *a, **k): return []
+class _WAApp:
+    def __init__(self): self.job_queue = _WAJobQueue()
+class _WAContext:
+    def __init__(self): self.user_data = {}; self.application = _WAApp(); self.bot = None; self.args = []
+
+
+def _wa_extract_code(main, text):
+    for tok in re.findall(r"[A-Za-z0-9]+", text or ""):
+        if 5 <= len(tok) <= 12 and main.get_user_by_referral_code(tok):
+            return tok
+    return None
+
+
+def _wa_extract_family_code(main, text):
+    m = re.search(r"fam_([A-Za-z0-9]{4,16})", text or "")
+    if m and main.get_user_by_referral_code(m.group(1)):
+        return m.group(1)
+    return None
+
+
+def _wa_process_message(main, frm, profile, mtype, text):
+    # ¿Pedido de vinculación de cuenta? ("vincular <código>" generado con /vincular en Telegram).
+    lm = re.search(r"vincular\s+([A-Za-z0-9]{4,12})", text or "", re.I)
+    if lm:
+        ok, name = main.link_whatsapp(lm.group(1), frm)
+        if ok:
+            wa_send(frm, f"✅ Listo {name}, vinculé este WhatsApp con tu cuenta de Yumi. "
+                         "Ahora ves lo mismo acá y en Telegram.")
+        else:
+            wa_send(frm, "Ese código de vinculación no es válido o venció 😕 "
+                         "Generá uno nuevo con /vincular en Telegram.")
+        return
+    user = main.get_user_by_wa(frm)
+    if not user:
+        # Invitación a la FAMILIA: se une al hogar del que invita (comparte todo).
+        famcode = _wa_extract_family_code(main, text)
+        if famcode:
+            inviter = main.get_user_by_referral_code(famcode)
+            if inviter:
+                cap = main.plan_limits(main.household_plan(inviter["id"]))["household"]
+                if len(main.household_member_ids(inviter["id"])) >= cap:
+                    wa_send(frm, f"El hogar de {inviter['name']} ya está completo para su plan. Que actualice el plan para sumar a más.")
+                    return
+                hh = inviter.get("household_id") or inviter["id"]
+                new_user, temp_pw = main.onboard_user("whatsapp", frm, profile or "Usuario", inviter["id"], household_id=hh)
+                msg = (f"🎉 ¡Bienvenido/a a Yumi, {new_user['name']}! Te sumaste a la familia de {inviter['name']} "
+                       "— van a compartir listas, gastos y agenda.")
+                if temp_pw:
+                    msg += (f"\n\n🌐 App web de Yumi: {APP_URL}\n"
+                            f"Entrá con usuario {new_user['username']} y clave temporal {temp_pw} (cambiala desde la web).")
+                wa_send(frm, msg)
+                return
+        code = _wa_extract_code(main, text)
+        if code:
+            referrer = main.get_user_by_referral_code(code)
+            if referrer and main.can_invite(referrer):
+                new_user, temp_pw = main.onboard_user("whatsapp", frm, profile or "Usuario", referrer["id"])
+                msg = (f"🎉 ¡Bienvenido/a a Yumi, {new_user['name']}! Te invitó {referrer['name']}.\n\n"
+                       "Soy tu asistente: mandame un gasto, una tarea o una pregunta.\n"
+                       "💸 «pagué 1000 de café con débito»\n"
+                       "✅ «tengo que pagar la luz»\n"
+                       "📊 «cuánto gasté este mes?»")
+                if temp_pw:
+                    msg += (f"\n\n🌐 App web de Yumi: {APP_URL}\n"
+                            f"Entrá con usuario {new_user['username']} y clave temporal {temp_pw} "
+                            f"(cambiala desde la web). También podés usar todo acá por WhatsApp.")
+                wa_send(frm, msg)
+                return
+        wa_send(frm, getattr(main, "REGISTER_MSG", "👋 Yumi es por invitación. Pedile su link a quien te invitó."))
+        return
+    if mtype != "text" or not (text or "").strip():
+        wa_send(frm, "Por ahora te entiendo por texto 🙂 (los audios llegan pronto).")
+        return
+    try:
+        raw_id = main.save_raw(user["telegram_id"], user.get("username") or profile or "", "whatsapp", text)
+    except Exception:
+        raw_id = None
+    upd = _WAUpdate(user["telegram_id"], user["name"], frm, text)
+    try:
+        asyncio.run(main.process_text(upd, _WAContext(), text, raw_id))
+    except Exception as e:
+        print("wa process_text error:", e)
+        wa_send(frm, "Uy, algo falló procesando eso 😕 Probá de nuevo.")
+
+
+def _wa_handle(data):
+    """Procesa el payload del webhook en background (fuera del request → 200 rápido a Meta)."""
+    try:
+        import main
+    except Exception as e:
+        print("wa: no pude importar main:", e); return
+    try:
+        for entry in data.get("entry", []):
+            for ch in entry.get("changes", []):
+                val = ch.get("value", {}) or {}
+                contacts = val.get("contacts") or []
+                profile = ((contacts[0].get("profile") or {}).get("name")) if contacts else ""
+                for msg in (val.get("messages") or []):
+                    mid = msg.get("id")
+                    if mid and mid in _wa_seen:
+                        continue
+                    if mid:
+                        _wa_seen.add(mid)
+                        if len(_wa_seen) > 5000: _wa_seen.clear()
+                    frm = msg.get("from")
+                    mtype = msg.get("type")
+                    text = (msg.get("text") or {}).get("body", "") if mtype == "text" else ""
+                    _wa_process_message(main, frm, profile, mtype, text)
+    except Exception as e:
+        print("wa_handle error:", e)
+
+
+@app.get("/api/whatsapp/webhook")
+def wa_verify(request: Request):
+    p = request.query_params
+    if (WHATSAPP_VERIFY_TOKEN and p.get("hub.mode") == "subscribe"
+            and p.get("hub.verify_token") == WHATSAPP_VERIFY_TOKEN):
+        return PlainTextResponse(p.get("hub.challenge", ""))
+    raise HTTPException(403, "verify failed")
+
+
+@app.post("/api/whatsapp/webhook")
+async def wa_receive(request: Request, background: BackgroundTasks):
+    raw = await request.body()
+    if WHATSAPP_APP_SECRET:
+        sig = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + hmac.new(WHATSAPP_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise HTTPException(403, "bad signature")
+    try:
+        data = json.loads(raw or b"{}")
+    except Exception:
+        data = {}
+    background.add_task(_wa_handle, data)
+    return {"ok": True}
+
+
 # ─── Utils ────────────────────────────────────────────────────────────────
-def get_dolar_rate(rate_type="blue"):
-    now = _time.time()
-    if rate_type in _rate_cache:
-        ts, value = _rate_cache[rate_type]
-        if now - ts < RATE_TTL: return value
+_RATE_TYPES = ("blue", "oficial", "mep", "cripto")
+
+def _fetch_rate_now(rate_type):
+    """Fetch sincrónico — se usa SOLO desde el hilo de fondo, NUNCA en el request
+    (la resolución DNS fría puede tardar ~9s y no está acotada por el timeout del socket)."""
     try:
         req = urllib.request.Request(f"https://dolarapi.com/v1/dolares/{rate_type}",
                                      headers={"User-Agent": "Mozilla/5.0 (asistente-web)"})
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read().decode())
-        rate = (data.get("compra",0) + data.get("venta",0)) / 2
-        if not rate: return None
-        _rate_cache[rate_type] = (now, rate)
-        return rate
-    except Exception: return None
+        rate = (data.get("compra", 0) + data.get("venta", 0)) / 2
+        return rate or None
+    except Exception:
+        return None
+
+def get_dolar_rate(rate_type="blue"):
+    """NO bloquea el request: devuelve el valor cacheado (aunque esté algo viejo) o None.
+    El fetch real lo hace `_rate_refresher` en un hilo de fondo, manteniendo la caché tibia."""
+    e = _rate_cache.get(rate_type)
+    return e[1] if e else None
+
+def _rate_refresher():
+    while True:
+        for rt in _RATE_TYPES:
+            r = _fetch_rate_now(rt)
+            if r:
+                _rate_cache[rt] = (_time.time(), r)
+        _time.sleep(600)
+
+threading.Thread(target=_rate_refresher, daemon=True, name="rate-refresher").start()
 
 
 # ─── Overview ─────────────────────────────────────────────────────────────
@@ -416,6 +885,9 @@ def api_accounts(include_inactive: bool = False, user=Depends(require_user), sco
         if not include_inactive: conds.append("active=1")
         if scope_uid is not None:
             conds.append("user_id=?"); params.append(scope_uid)
+        else:  # "ambos" = mi hogar (no global)
+            _m = _household_member_ids(user["id"])
+            conds.append(f"user_id IN ({','.join('?' for _ in _m)})"); params.extend(_m)
         if conds: base += " WHERE " + " AND ".join(conds)
         base += " ORDER BY active DESC, name" if include_inactive else " ORDER BY name"
         rows = conn.execute(base, params).fetchall()
@@ -465,14 +937,17 @@ def api_acc_delete(aid: int, user=Depends(require_user)):
     return {"ok": True}
 
 
-# ─── Categories (compartidas) ─────────────────────────────────────────────
+# ─── Categories (por hogar; household_id NULL = compartida/default) ─────────
+# Las categorías default vienen con household_id NULL → visibles para todos, NO
+# editables. Cada hogar puede crear/editar/borrar SOLO las suyas (A-3).
 @app.get("/api/categories")
 def api_categories(include_inactive: bool = False, user=Depends(require_user)):
+    hh = _household_id_of(user)
+    q = "SELECT * FROM categories WHERE (household_id IS NULL OR household_id=?)"
+    if not include_inactive: q += " AND active=1"
+    q += " ORDER BY active DESC, type, name"
     with db() as conn:
-        if include_inactive:
-            rows = conn.execute("SELECT * FROM categories ORDER BY active DESC, type, name").fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM categories WHERE active=1 ORDER BY type, name").fetchall()
+        rows = conn.execute(q, (hh,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -480,13 +955,26 @@ def api_categories(include_inactive: bool = False, user=Depends(require_user)):
 def api_cat_create(body: dict = Body(...), user=Depends(require_user)):
     name = (body.get("name") or "").strip()
     if not name: raise HTTPException(400, "Nombre requerido")
+    hh = _household_id_of(user)
     with db() as conn:
-        if conn.execute("SELECT id FROM categories WHERE name=?", (name,)).fetchone():
+        # único dentro del hogar (y no pisar una compartida del mismo nombre)
+        if conn.execute("SELECT id FROM categories WHERE name=? AND (household_id=? OR household_id IS NULL)",
+                        (name, hh)).fetchone():
             raise HTTPException(400, "Ya existe")
-        cur = conn.execute("INSERT INTO categories (name,type,color,icon,active) VALUES (?,?,?,?,1)",
-            (name, body.get("type","gasto"), body.get("color","#94a3b8"), body.get("icon","📦")))
+        cur = conn.execute("INSERT INTO categories (name,type,color,icon,active,household_id) VALUES (?,?,?,?,1,?)",
+            (name, body.get("type","gasto"), body.get("color","#94a3b8"), body.get("icon","📦"), hh))
         conn.commit()
         return {"id": cur.lastrowid, "ok": True}
+
+
+def _own_category_or_403(conn, cid, user):
+    """Devuelve la fila si la categoría es del hogar del usuario; si es compartida
+    (household_id NULL) o de otro hogar, tira 403; si no existe, 404."""
+    row = conn.execute("SELECT * FROM categories WHERE id=?", (cid,)).fetchone()
+    if not row: raise HTTPException(404, "No existe")
+    if row["household_id"] is None: raise HTTPException(403, "Categoría compartida (no editable)")
+    if row["household_id"] != _household_id_of(user): raise HTTPException(403, "No es de tu hogar")
+    return row
 
 
 @app.patch("/api/categories/{cid}")
@@ -496,8 +984,9 @@ def api_cat_update(cid: int, body: dict = Body(...), user=Depends(require_user))
         if k in body: fields.append(f"{k}=?"); params.append(body[k])
     if "active" in body: fields.append("active=?"); params.append(1 if body["active"] else 0)
     if not fields: raise HTTPException(400, "Sin cambios")
-    params.append(cid)
     with db() as conn:
+        _own_category_or_403(conn, cid, user)
+        params.append(cid)
         conn.execute(f"UPDATE categories SET {', '.join(fields)} WHERE id=?", params); conn.commit()
     return {"ok": True}
 
@@ -505,6 +994,7 @@ def api_cat_update(cid: int, body: dict = Body(...), user=Depends(require_user))
 @app.delete("/api/categories/{cid}")
 def api_cat_delete(cid: int, user=Depends(require_user)):
     with db() as conn:
+        _own_category_or_403(conn, cid, user)
         in_use = conn.execute("SELECT COUNT(*) FROM transactions WHERE category_id=?", (cid,)).fetchone()[0]
         if in_use:
             conn.execute("UPDATE categories SET active=0 WHERE id=?", (cid,)); conn.commit()
@@ -780,12 +1270,18 @@ def crear_tarea(body: dict = Body(...), user=Depends(require_user)):
     return {"id": cur.lastrowid, "ok": True}
 
 
+def _can_touch_shared(conn, row, user):
+    """True si la fila (user_id, sh) es del usuario, o compartida y de su hogar."""
+    if not row: return False
+    if row["user_id"] == user["id"]: return True
+    return bool(row["sh"]) and row["user_id"] in _household_member_ids(user["id"])
+
+
 @app.post("/api/tareas/{tid}/done")
 def t_done(tid: int, user=Depends(require_user)):
     with db() as conn:
         row = conn.execute("SELECT user_id, COALESCE(shared,0) AS sh FROM tareas WHERE id=?", (tid,)).fetchone()
-        if row and row["user_id"] != user["id"] and not row["sh"]:
-            raise HTTPException(403, "No es tuya")
+        if not _can_touch_shared(conn, row, user): raise HTTPException(403, "No es tuya")
         conn.execute("UPDATE tareas SET status='hecha', completed_at=datetime('now') WHERE id=?", (tid,)); conn.commit()
     return {"ok": True}
 
@@ -794,8 +1290,7 @@ def t_done(tid: int, user=Depends(require_user)):
 def t_undone(tid: int, user=Depends(require_user)):
     with db() as conn:
         row = conn.execute("SELECT user_id, COALESCE(shared,0) AS sh FROM tareas WHERE id=?", (tid,)).fetchone()
-        if row and row["user_id"] != user["id"] and not row["sh"]:
-            raise HTTPException(403, "No es tuya")
+        if not _can_touch_shared(conn, row, user): raise HTTPException(403, "No es tuya")
         conn.execute("UPDATE tareas SET status='pendiente', completed_at=NULL WHERE id=?", (tid,)); conn.commit()
     return {"ok": True}
 
@@ -804,8 +1299,7 @@ def t_undone(tid: int, user=Depends(require_user)):
 def del_tar(tid: int, user=Depends(require_user)):
     with db() as conn:
         row = conn.execute("SELECT user_id, COALESCE(shared,0) AS sh FROM tareas WHERE id=?", (tid,)).fetchone()
-        if row and row["user_id"] != user["id"] and not row["sh"]:
-            raise HTTPException(403, "No es tuya")
+        if not _can_touch_shared(conn, row, user): raise HTTPException(403, "No es tuya")
         conn.execute("DELETE FROM tareas WHERE id=?", (tid,)); conn.commit()
     return {"ok": True}
 
@@ -846,11 +1340,12 @@ def del_rec(rid: int, user=Depends(require_user)):
 @app.get("/api/notas")
 def api_notas(q: str = None, limit: int = 50, user=Depends(require_user), scope: str = Cookie("mine")):
     scope_uid = resolve_scope_uid(scope, user)
-    if scope_uid is not None:
-        wuser = "(user_id=? OR COALESCE(shared,0)=1)"
-        params_user = [scope_uid]
-    else:
-        wuser = "1=1"; params_user = []
+    members = _household_member_ids(user["id"])
+    mph = ",".join("?" for _ in members)
+    if scope_uid is None:  # "ambos" del hogar
+        wuser = f"user_id IN ({mph})"; params_user = list(members)
+    else:  # propias + compartidas DENTRO del hogar (aislamiento)
+        wuser = f"(user_id=? OR (COALESCE(shared,0)=1 AND user_id IN ({mph})))"; params_user = [scope_uid] + list(members)
     with db() as conn:
         if q:
             rows = conn.execute(
@@ -868,8 +1363,10 @@ def crear_nota(body: dict = Body(...), user=Depends(require_user)):
     text = (body.get("text") or "").strip()
     if not text: raise HTTPException(400, "Texto requerido")
     tags = json.dumps(body.get("tags") or [], ensure_ascii=False)
+    desc = (body.get("description") or "").strip() or None
     with db() as conn:
-        cur = conn.execute("INSERT INTO notas (text,tags,user_id) VALUES (?,?,?)", (text, tags, user["id"])); conn.commit()
+        cur = conn.execute("INSERT INTO notas (text,tags,description,user_id) VALUES (?,?,?,?)",
+                           (text, tags, desc, user["id"])); conn.commit()
     return {"id": cur.lastrowid, "ok": True}
 
 
@@ -877,8 +1374,7 @@ def crear_nota(body: dict = Body(...), user=Depends(require_user)):
 def del_nota(nid: int, user=Depends(require_user)):
     with db() as conn:
         row = conn.execute("SELECT user_id, COALESCE(shared,0) AS sh FROM notas WHERE id=?", (nid,)).fetchone()
-        if row and row["user_id"] != user["id"] and not row["sh"]:
-            raise HTTPException(403, "No es tuya")
+        if not _can_touch_shared(conn, row, user): raise HTTPException(403, "No es tuya")
         conn.execute("DELETE FROM notas WHERE id=?", (nid,)); conn.commit()
     return {"ok": True}
 

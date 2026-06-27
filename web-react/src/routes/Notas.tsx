@@ -13,6 +13,7 @@ import { MovimientosSkeleton } from '../components/ui/skeletons'
 
 const schema = z.object({
   text: z.string().min(1, 'Requerido'),
+  description: z.string().optional(),
   tags: z.string(), // comma-separated
 })
 
@@ -28,13 +29,14 @@ function NotaModal({
   open: boolean
   onClose: () => void
   title: string
-  initial?: { text: string; tags: string[] }
-  onSubmit: (text: string, tags: string[]) => void
+  initial?: { text: string; tags: string[]; description?: string }
+  onSubmit: (text: string, tags: string[], description: string) => void
 }) {
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       text: initial?.text ?? '',
+      description: initial?.description ?? '',
       tags: initial?.tags.join(', ') ?? '',
     },
   })
@@ -43,6 +45,7 @@ function NotaModal({
     if (open) {
       reset({
         text: initial?.text ?? '',
+        description: initial?.description ?? '',
         tags: initial?.tags.join(', ') ?? '',
       })
     }
@@ -53,7 +56,7 @@ function NotaModal({
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean)
-    onSubmit(data.text, tags)
+    onSubmit(data.text, tags, (data.description ?? '').trim())
     reset()
   }
 
@@ -61,15 +64,24 @@ function NotaModal({
     <Modal open={open} onClose={() => { onClose(); reset() }} title={title}>
       <form onSubmit={handleSubmit(submit)} style={{ display: 'grid', gap: 12 }}>
         <div>
-          <textarea
+          <input
             {...register('text')}
-            placeholder="Escribí tu nota…"
+            placeholder="Título de la nota…"
             autoFocus
-            rows={5}
-            style={{ ...inputStyle, resize: 'vertical' }}
+            style={inputStyle}
           />
           {errors.text && <span style={errorStyle}>{errors.text.message}</span>}
         </div>
+
+        <label style={labelStyle}>
+          Descripción (opcional)
+          <textarea
+            {...register('description')}
+            placeholder="Detalle, contenido más largo…"
+            rows={5}
+            style={{ ...inputStyle, resize: 'vertical' }}
+          />
+        </label>
 
         <label style={labelStyle}>
           Etiquetas (opcional, separadas por coma)
@@ -105,14 +117,14 @@ export default function Notas() {
     )
   })
 
-  const handleCreate = (text: string, tags: string[]) => {
-    create.mutate({ text, tags })
+  const handleCreate = (text: string, tags: string[], description: string) => {
+    create.mutate({ text, tags, description })
     setNewOpen(false)
   }
 
-  const handleEdit = (text: string, tags: string[]) => {
+  const handleEdit = (text: string, tags: string[], description: string) => {
     if (!editItem) return
-    update.mutate({ id: editItem.id, text, tags })
+    update.mutate({ id: editItem.id, text, tags, description })
     setEditItem(null)
   }
 
@@ -144,7 +156,10 @@ export default function Notas() {
         <Card key={n.id}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{n.text}</div>
+              <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{n.text}</div>
+              {n.description && (
+                <div style={{ fontSize: 13, color: 'var(--color-sage)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4 }}>{n.description}</div>
+              )}
               {n.tags.length > 0 && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                   {n.tags.map((tag) => (
@@ -187,7 +202,7 @@ export default function Notas() {
         open={editItem !== null}
         onClose={() => setEditItem(null)}
         title="Editar nota"
-        initial={editItem ? { text: editItem.text, tags: editItem.tags } : undefined}
+        initial={editItem ? { text: editItem.text, tags: editItem.tags, description: editItem.description ?? undefined } : undefined}
         onSubmit={handleEdit}
       />
 

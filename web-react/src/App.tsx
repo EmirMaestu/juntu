@@ -16,6 +16,7 @@ import Habitos from './routes/Habitos'
 import Listas from './routes/Listas'
 import Agenda from './routes/Agenda'
 import Buscar from './routes/Buscar'
+import Admin from './routes/Admin'
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/listas" element={<Listas />} />
         <Route path="/agenda" element={<Agenda />} />
         <Route path="/buscar" element={<Buscar />} />
+        <Route path="/admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

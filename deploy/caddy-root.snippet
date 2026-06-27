@@ -5,6 +5,20 @@
 asistente.emir-maestu.site {
     encode gzip
 
+    # --- Headers de seguridad (aplican a todas las respuestas del sitio) ---
+    # CSP: bloquea recursos externos y framing. Se permiten los CDNs que usa la
+    # landing (GSAP/cdnjs, Lenis/jsdelivr, Google Fonts) y 'unsafe-inline' por
+    # las páginas legacy server-rendered y los estilos inline de React.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+        -Server
+    }
+
     redir /app /app/
     redir /legacy /legacy/
 

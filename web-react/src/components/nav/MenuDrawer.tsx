@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
 import { MENU_LINKS } from './navItems'
+import { useMe } from '../../hooks/useMe'
 
 export default function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data: me } = useMe()
   if (!open) return null
   return (
     <div
@@ -35,6 +37,14 @@ export default function MenuDrawer({ open, onClose }: { open: boolean; onClose: 
             )}
           </div>
         ))}
+        {me?.is_admin && (
+          <>
+            <div style={{ height: 1, background: 'var(--color-mist)', marginTop: 8 }} />
+            <Link to="/admin" onClick={onClose} style={{ color: 'var(--color-obsidian-ink)', textDecoration: 'none', fontSize: 16, fontWeight: 500 }}>
+              <i className="ti ti-shield-lock" style={{ marginRight: 8 }} aria-hidden />Admin
+            </Link>
+          </>
+        )}
         <a href="/legacy/" style={{ color: 'var(--color-sage)', fontSize: 14, textDecoration: 'none', marginTop: 8 }}>Dashboard viejo →</a>
       </div>
     </div>

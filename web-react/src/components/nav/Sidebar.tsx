@@ -1,7 +1,9 @@
 import { NavLink } from 'react-router-dom'
 import { SIDEBAR_GROUPS } from './navItems'
+import { useMe } from '../../hooks/useMe'
 
 export default function Sidebar({ onAdd }: { onAdd: () => void }) {
+  const { data: me } = useMe()
   return (
     <aside style={{ width: 220, borderRight: '1px solid var(--color-mist)', padding: 24, display: 'grid', gap: 6, alignContent: 'start' }}>
       <button onClick={onAdd} style={{
@@ -29,6 +31,14 @@ export default function Sidebar({ onAdd }: { onAdd: () => void }) {
           )}
         </div>
       ))}
+      {me?.is_admin && (
+        <NavLink to="/admin" style={({ isActive }) => ({
+          color: isActive ? 'var(--color-obsidian-ink)' : 'var(--color-sage)',
+          textDecoration: 'none', fontSize: 15, padding: '8px 0', fontWeight: isActive ? 500 : 400, display: 'block',
+        })}>
+          <i className="ti ti-shield-lock" style={{ marginRight: 8 }} aria-hidden />Admin
+        </NavLink>
+      )}
     </aside>
   )
 }

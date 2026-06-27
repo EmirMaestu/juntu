@@ -1,8 +1,31 @@
-# Pegar DENTRO del bloque del sitio asistente.emir-maestu.site { ... } en el Caddyfile.
-# Sirve el SPA React (Juntu) en /app con fallback de rutas (SPA). No toca /api ni /.
+# Caddyfile COMPLETO para asistente.emir-maestu.site (sirve el SPA Juntu en /app
+# y deja todo lo demás — /, /api, /login — yendo al FastAPI en :8000).
+# Reemplaza /etc/caddy/Caddyfile con esto y: sudo systemctl reload caddy
 
-	handle_path /app/* {
-		root * /home/emir/asistente/webapp
-		try_files {path} /index.html
-		file_server
-	}
+asistente.emir-maestu.site {
+    encode gzip
+
+    # --- Headers de seguridad (aplican a todas las respuestas del sitio) ---
+    # CSP: bloquea scripts/recursos externos y framing. 'unsafe-inline' es
+    # necesario por las páginas server-rendered legacy (login/dashboard) y los
+    # estilos inline de React; el resto queda acotado a 'self'.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+        -Server
+    }
+
+    handle_path /app/* {
+        root * /home/emir/asistente/webapp
+        try_files {path} /index.html
+        file_server
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8000
+    }
+}

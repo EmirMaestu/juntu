@@ -20,10 +20,21 @@ npm ci          # si es una PC limpia; si no, salteá
 npm run build   # genera web-react/dist/ con base /app/
 ```
 
-## 2. Subir el build al VPS (desde tu PC, en la raíz del repo)
-```bash
-ssh emir@217.76.48.219 'mkdir -p ~/asistente/webapp'
-scp -r web-react/dist/* emir@217.76.48.219:~/asistente/webapp/
+## 2. Subir el build al VPS (desde tu PC, en la carpeta `web-react/`)
+PowerShell/scp NO expanden `*` (scp no hace glob local), así que copiamos la carpeta `dist`
+entera. Desde `web-react/`:
+```powershell
+ssh emir@217.76.48.219 'rm -rf ~/asistente/webapp'
+scp -r dist emir@217.76.48.219:~/asistente/webapp
+ssh emir@217.76.48.219 'ls ~/asistente/webapp'   # debe listar index.html y assets/
+```
+(El destino `webapp` no debe existir antes del scp: así `dist` queda copiada como `webapp/`
+con `index.html` y `assets/` adentro.)
+
+Luego copiá a `/var/www/juntu` (Caddy no puede leer dentro de `/home`). El `sudo` por SSH
+necesita `-t` (TTY) para pedir la contraseña:
+```powershell
+ssh -t emir@217.76.48.219 'sudo rm -rf /var/www/juntu && sudo cp -r ~/asistente/webapp /var/www/juntu && sudo chmod -R a+rX /var/www/juntu'
 ```
 
 ## 3. Servir el SPA en `/app` con Caddy (en el VPS)

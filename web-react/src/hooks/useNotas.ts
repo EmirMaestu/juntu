@@ -31,12 +31,14 @@ export function useNotas(q?: string) {
 interface NotaCreate {
   text: string
   tags?: string[]
+  description?: string
 }
 
 interface NotaUpdate {
   id: number
   text?: string
   tags?: string[]
+  description?: string
 }
 
 export function useNotasMutations() {

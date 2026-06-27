@@ -7,6 +7,12 @@ venv/
 data.db
 .env
 
+# secretos / credenciales (nunca commitear)
+credenciales*.txt
+*credenciales*.txt
+*.secret
+*token*.txt
+
 # backend backups
 *.bak
 *.bak.*

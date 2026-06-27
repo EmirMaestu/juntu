@@ -2370,6 +2370,8 @@ async def post_init(app):
             ("lista", "Ver una lista (/lista [nombre])"),
             ("listas", "Todas tus listas"),
             ("meta", "Meta semanal de un habito"),
+            ("invitar", "Sumar a tu familia/pareja (segun tu plan)"),
+            ("vincular", "Vincular este Telegram con tu WhatsApp"),
             ("password", "Cambiar clave del dashboard"),
             ("help", "Ayuda"),
         ])

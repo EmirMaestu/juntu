@@ -34,6 +34,14 @@ const TIPO_ICON: Record<string, string> = {
   recurrente: 'ti-repeat',
 }
 
+// --- HoyItem → ruta (para hacer cada item clickeable) ---
+const TIPO_ROUTE: Record<string, string> = {
+  evento: '/agenda',
+  recordatorio: '/agenda',
+  tarea: '/tareas',
+  recurrente: '/recurrentes',
+}
+
 function TipoIcon({ tipo }: { tipo: string }) {
   const icon = TIPO_ICON[tipo] ?? 'ti-point'
   return <i className={`ti ${icon}`} aria-hidden style={{ fontSize: 16, color: 'var(--color-sage)', flexShrink: 0 }} />
@@ -127,7 +135,8 @@ export default function Hoy() {
           : (
             <div style={{ display: 'grid', gap: 12 }}>
               {hoy.map((item, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <Link key={i} to={TIPO_ROUTE[item.tipo] ?? '/'}
+                  style={{ display: 'flex', gap: 10, alignItems: 'flex-start', textDecoration: 'none', color: 'inherit' }}>
                   <TipoIcon tipo={item.tipo} />
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
@@ -143,7 +152,7 @@ export default function Hoy() {
                       </div>
                     )}
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           )}

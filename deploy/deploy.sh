@@ -37,13 +37,17 @@ notify_owner(){ # $1 = texto. Solo al owner, vía bot. Nunca falla el deploy por
   set -e
 }
 
-healthy(){ # web 200 en /api/health  +  bot active y estable
-  curl -fsS -m 8 "$HEALTH" >/dev/null 2>&1 || return 1
-  systemctl is-active --quiet "$SVC_BOT" || return 1
-  sleep 8
-  systemctl is-active --quiet "$SVC_BOT" || return 1
-  curl -fsS -m 8 "$HEALTH" >/dev/null 2>&1 || return 1
-  return 0
+healthy(){ # espera a que la web responda (hasta ~40s) y ambos servicios estén active
+  local i
+  for i in $(seq 1 20); do
+    if curl -fsS -m 5 "$HEALTH" >/dev/null 2>&1 \
+       && systemctl is-active --quiet "$SVC_BOT" \
+       && systemctl is-active --quiet "$SVC_WEB"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 # Reiniciar de a UNO: el sudoers acotado permite cada servicio por separado,

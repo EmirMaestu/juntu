@@ -49,6 +49,10 @@ app = FastAPI(title="Asistente Dashboard")
 init_crud_v2()
 app.include_router(crud_v2_router)
 
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
 
 # ─── DB ───────────────────────────────────────────────────────────────────
 @contextmanager

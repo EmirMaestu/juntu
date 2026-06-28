@@ -6,7 +6,9 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 ### Fixed
-- **El select de categoría cerraba el modal/sheet al tocarlo (sobre todo en móvil).** El guard solo cubría `onInteractOutside`; en touch se disparaba `pointerDownOutside`/scroll del desplegable y cerraba todo. Ahora el guard cubre ambos eventos y reconoce el contenido del Select (popper/listbox).
+- **Los selects ahora usan el picker NATIVO del sistema (arregla 2 bugs de móvil).** El `<Select>` de Radix dentro de un modal/sheet (1) cerraba el modal al tocar una opción y (2) se reabría al volver a tocar el trigger para cerrarlo. Se reemplazó por un `<select>` nativo: en el celular abre el picker de iOS/Android y no tiene ninguno de esos problemas. Misma apariencia y misma API (no cambian los formularios).
+- **Borrar un aviso de un evento (la ✕) no se reflejaba hasta refrescar.** El borrado de recordatorio solo invalidaba la lista de recordatorios, pero los avisos se muestran embebidos en el evento → ahora también se refresca la agenda (eventos) y desaparece al instante.
+- **Inputs que llegaban al borde del modal en el celular.** El contenedor del sheet sumaba su padding al ancho (`width:100%` sin `box-sizing`), corriendo los inputs fuera de pantalla a la derecha. Se agregó un reset global de `box-sizing: border-box` + se emparejaron los estilos de input que faltaban (`width:100%`/`box-sizing`) en QuickAdd y editar-movimiento.
 
 ### Changed
 - **Más tipos de cuenta:** se agregaron **Débito**, **Dólares (USD)** y **Cripto** (además de Efectivo, Billetera, Crédito, Banco, Inversión).

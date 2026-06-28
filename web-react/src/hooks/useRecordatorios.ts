@@ -25,7 +25,12 @@ export type SnoozePreset = '1h' | 'manana' | 'semana'
 
 export function useRecordatoriosMutations() {
   const qc = useQueryClient()
-  const inval = () => qc.invalidateQueries({ queryKey: ['recordatorios'] })
+  // los recordatorios se muestran embebidos en los eventos (event.reminders) →
+  // al crear/borrar/editar uno hay que refrescar también ['eventos'] para verlo en tiempo real
+  const inval = () => {
+    qc.invalidateQueries({ queryKey: ['recordatorios'] })
+    qc.invalidateQueries({ queryKey: ['eventos'] })
+  }
 
   return {
     create: useMutation({

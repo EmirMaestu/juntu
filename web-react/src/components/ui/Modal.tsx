@@ -19,7 +19,7 @@ export default function Modal({ open, onClose, title, children }: { open: boolea
             const t = e.target as HTMLElement | null
             if (t && t.closest('[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role="listbox"]')) e.preventDefault()
           }}
-          style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 61, width: 'min(440px, 92vw)', borderRadius: 16, padding: 22, maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-linen)', boxShadow: '0 8px 40px rgba(18,22,19,0.18)' }}>
+          style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 61, width: 'min(440px, 92vw)', borderRadius: 16, padding: 22, maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-linen)', boxShadow: '0 8px 40px rgba(18,22,19,0.18)', boxSizing: 'border-box' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Dialog.Title style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>{title}</Dialog.Title>
             <Dialog.Close aria-label="Cerrar" style={{ background: 'none', border: 'none', cursor: 'pointer' }}><i className="ti ti-x" style={{ fontSize: 20 }} aria-hidden /></Dialog.Close>

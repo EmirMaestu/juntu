@@ -25,6 +25,11 @@
   --voltage-on-dark: #0f3d18; /* texto sobre fondo voltage */
 }
 
+/* Reset global: que el padding nunca sume al ancho. Evita que inputs/modales
+   se desborden del contenedor en móvil (el padding del Sheet empujaba los
+   inputs fuera de pantalla). */
+*, *::before, *::after { box-sizing: border-box; }
+
 html, body, #root { height: 100%; }
 body {
   margin: 0;

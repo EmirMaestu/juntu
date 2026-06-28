@@ -63,7 +63,7 @@ type RecordatorioInput = z.infer<typeof recordatorioSchema>
 // ---------- shared styles ----------
 const fieldStyle: React.CSSProperties = {
   border: '1px solid var(--color-mist)', borderRadius: 10, padding: '12px 14px',
-  fontSize: 16, background: 'transparent',
+  fontSize: 16, background: 'transparent', width: '100%', boxSizing: 'border-box',
 }
 const ctaStyle: React.CSSProperties = {
   background: 'var(--color-voltage)', color: 'var(--voltage-on-dark)', border: 'none',

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 REF="${1:?uso: deploy.sh <ref> <env>}"
+REF="${REF//[[:space:]]/}"   # sacar espacios accidentales (ej "v0.10.2 ") que rompen el checkout
 ENVN="${2:-prod}"
 
 REPO="/home/emir/yumi"

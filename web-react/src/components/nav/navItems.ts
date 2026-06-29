@@ -2,7 +2,7 @@ export interface NavItem { to: string; label: string; icon: string }
 
 // Barra inferior (mobile): 4 hubs + el FAB "+" (que se renderiza al medio en BottomNav).
 export const BOTTOM_NAV: NavItem[] = [
-  { to: '/', label: 'Hoy', icon: 'ti-sparkles' },
+  { to: '/', label: 'Inicio', icon: 'ti-sparkles' },
   { to: '/finanzas', label: 'Finanzas', icon: 'ti-coin' },
   { to: '/agenda', label: 'Agenda', icon: 'ti-calendar' },
   { to: '/yo', label: 'Yo', icon: 'ti-user' },
@@ -33,7 +33,7 @@ export const SIDEBAR_GROUPS: NavGroup[] = [
   {
     title: 'Asistente',
     items: [
-      { to: '/', label: 'Hoy', icon: 'ti-sparkles' },
+      { to: '/', label: 'Inicio', icon: 'ti-sparkles' },
       ...HOY_RAIL,
     ],
   },

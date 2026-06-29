@@ -6,6 +6,10 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-06-29
+### Changed
+- **Inicio más simple (ex "Hoy").** La sección **"Hoy" pasó a llamarse "Inicio"**. Se quitó el riel de "chips" del tope. Ahora **Hábitos, Listas y Notas** aparecen como **cards clickeables** debajo de Pendientes (con un resumen) y llevan a su pantalla; esas pantallas ganaron un **botón de volver**. Se quitó "Suscribir a mi calendario" de Agenda.
+
 ## [0.10.3] - 2026-06-29
 ### Added
 - **Rediseño de navegación (mobile): adiós al menú lateral.** Los usuarios no descubrían el cajón lateral (☰), así que se eliminó. Ahora:

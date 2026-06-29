@@ -66,13 +66,15 @@ export default function CalendarSubscribe() {
             Calendario → Cuentas → Agregar cuenta → Otra → <b>Agregar calendario suscrito</b> → pegá el link de abajo.
           </div>
 
-          {/* Google — solo desde computadora */}
+          {/* Google / Android — solo desde una computadora */}
           <div style={{ fontSize: 11.5, color: 'var(--color-sage)', lineHeight: 1.55, borderTop: '1px solid var(--color-mist)', paddingTop: 8 }}>
-            <b>Google Calendar — solo desde una computadora</b> (la app del celular no deja agregar por URL):<br />
-            1. Entrá a <b>calendar.google.com</b>.<br />
-            2. A la izquierda, al lado de <b>"Otros calendarios"</b>, tocá el <b>+</b> → <b>"Desde URL"</b>.<br />
-            3. Pegá el link de abajo y tocá <b>"Agregar calendario"</b>.<br />
-            (La primera vez puede tardar unas horas en aparecer.)
+            <b>Android / Google Calendar — desde una computadora (una sola vez).</b> La app del celular
+            NO tiene opción de agregar por URL, por eso no vas a encontrar "Otros calendarios" ahí.<br />
+            1. En una <b>computadora</b>, entrá a <b>calendar.google.com</b> con la misma cuenta de Google del celular.<br />
+            2. Abajo a la izquierda está la sección <b>"Otros calendarios"</b>; al lado del título tocá el <b>+</b> (aparece al pasar el mouse) → <b>"Desde una URL"</b>.<br />
+            3. Pegá el link de abajo → <b>"Añadir calendario"</b>.<br />
+            4. En el celular: app Google Calendar → <b>☰</b> → <b>Configuración</b> → buscá <b>"Yumi"</b> y activalo (visible/sincronizar).<br />
+            (La primera sincronización puede tardar unas horas.)
           </div>
 
           <div style={{ fontSize: 12, wordBreak: 'break-all', background: 'var(--color-mist)', padding: 8, borderRadius: 8 }}>{url}</div>

@@ -553,7 +553,11 @@ def get_listas(user=Depends(require_user_crud)):
         members = _hh_member_ids(conn, user["id"])
         # Visibilidad: listas propias + las compartidas del hogar (shared / dueño con share_all).
         import visibility
-        vf, vp = visibility.where(user["id"], None, members, owner_col="owner_user_id", shared_expr="shared=1")
+        # alias="" → columnas sin prefijo (la query es `FROM lists` sin alias `t`).
+        # Sin esto, visibility.where usa el alias por defecto "t" y genera
+        # `t.owner_user_id` → "no such column: t.owner_user_id" → el endpoint
+        # fallaba y la web mostraba "Sin listas aún" aunque hubiera listas.
+        vf, vp = visibility.where(user["id"], None, members, alias="", owner_col="owner_user_id", shared_expr="shared=1")
         lists = conn.execute(
             "SELECT id, name, icon, kind, target_date, recurrence FROM lists "
             f"WHERE COALESCE(is_template,0)=0 AND {vf} ORDER BY id", vp

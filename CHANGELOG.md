@@ -5,8 +5,14 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 > Regla: cada tanda de features = bump de versión (MINOR), entrada en este archivo, tag de git (`vX.Y.Z`) y redeploy. `1.0.0` = lanzamiento del **asistente completo** (no solo finanzas).
 
 ## [Unreleased]
+
+## [0.10.2] - 2026-06-29
 ### Fixed
-- **Selects estilizados (Radix) de vuelta, con el bug del modal arreglado.** El `<select>` nativo que se había puesto se veía feo en desktop, así que se restauró el Select lindo (Radix). Los 2 bugs que motivaron el nativo quedan cubiertos: (1) cerrar el modal al tocar una opción → guards en `Modal.tsx`/`Sheet.tsx` que ignoran el desplegable del Select; (2) reabrirse al tocar el trigger estando abierto → `onCloseAutoFocus` preventDefault en el contenido del Select.
+- **Las listas no aparecían en la web (afectaba a todos).** `get_listas` generaba SQL con un alias (`t.owner_user_id`) que la query no declaraba → fallaba con "no such column" y la web mostraba "Sin listas aún" aunque hubiera listas con ítems (las creadas por WhatsApp/Telegram tampoco se veían). Corregido (alias vacío → columnas sin prefijo).
+- **Selects estilizados (Radix) que ya no cierran el modal.** Se restauró el Select lindo (el `<select>` nativo se veía feo). Quedaba un bug: al re-tocar el trigger de un select abierto para cerrarlo, el modal se cerraba en desktop (y en móvil el select se reabría). Causa: el contenido del Select abre con `disableOutsidePointerEvents`, así que el Dialog leía el tap como "click afuera" (target `<html>`/`<body>`). Fix: mientras hay un Select abierto, el modal ignora los clicks afuera (flag global, independiente del target). *(El reopen del select en móvil queda por validar en dispositivo.)*
+
+## [0.10.1] - 2026-06-28
+### Fixed
 - **Borrar un aviso de un evento (la ✕) no se reflejaba hasta refrescar.** El borrado de recordatorio solo invalidaba la lista de recordatorios, pero los avisos se muestran embebidos en el evento → ahora también se refresca la agenda (eventos) y desaparece al instante.
 - **Inputs que llegaban al borde del modal en el celular.** El contenedor del sheet sumaba su padding al ancho (`width:100%` sin `box-sizing`), corriendo los inputs fuera de pantalla a la derecha. Se agregó un reset global de `box-sizing: border-box` + se emparejaron los estilos de input que faltaban (`width:100%`/`box-sizing`) en QuickAdd y editar-movimiento.
 

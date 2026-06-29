@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { isRadixPopperOpen } from './radixOpenState'
 
 export default function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
   return (
@@ -10,14 +11,15 @@ export default function Modal({ open, onClose, title, children }: { open: boolea
           className="nf-modal"
           onOpenAutoFocus={(e) => e.preventDefault()}
           onPointerDownOutside={(e) => {
+            // Si hay un Select/Popover abierto, el "afuera" es ese desplegable cerrándose
+            // (incl. re-tocar el trigger con disableOutsidePointerEvents → target <html>/<body>),
+            // no la intención de cerrar el modal. El closest() cubre el caso del desplegable visible.
             const t = e.target as HTMLElement | null
-            if (t && t.closest('[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role="listbox"]')) e.preventDefault()
+            if (isRadixPopperOpen() || (t && t.closest('[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role="listbox"]'))) e.preventDefault()
           }}
           onInteractOutside={(e) => {
-            // No cerrar el modal cuando el "afuera" es el desplegable de un Select/dropdown
-            // (Radix lo portalea fuera del Dialog → se interpretaba como click afuera).
             const t = e.target as HTMLElement | null
-            if (t && t.closest('[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role="listbox"]')) e.preventDefault()
+            if (isRadixPopperOpen() || (t && t.closest('[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role="listbox"]'))) e.preventDefault()
           }}
           style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 61, width: 'min(440px, 92vw)', borderRadius: 16, padding: 22, maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-linen)', boxShadow: '0 8px 40px rgba(18,22,19,0.18)', boxSizing: 'border-box' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

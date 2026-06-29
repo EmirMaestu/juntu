@@ -1,4 +1,5 @@
 import * as RS from '@radix-ui/react-select'
+import { radixPopperOpened, radixPopperClosed } from './radixOpenState'
 
 export interface Opt { value: string; label: string }
 
@@ -9,7 +10,7 @@ export interface Opt { value: string; label: string }
 // lo reabra (el bug de "se reabre al presionarlo abierto").
 export default function Select({ value, onValueChange, options, placeholder, ariaLabel, style }: { value?: string; onValueChange: (v: string) => void; options: Opt[]; placeholder?: string; ariaLabel?: string; style?: React.CSSProperties }) {
   return (
-    <RS.Root value={value} onValueChange={onValueChange}>
+    <RS.Root value={value} onValueChange={onValueChange} onOpenChange={(o) => { if (o) radixPopperOpened(); else radixPopperClosed() }}>
       <RS.Trigger aria-label={ariaLabel} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid var(--color-mist)', borderRadius: 10, padding: '9px 12px', fontSize: 14, background: 'var(--color-linen)', color: 'var(--color-obsidian-ink)', cursor: 'pointer', ...style }}>
         <RS.Value placeholder={placeholder} />
         <RS.Icon><i className="ti ti-chevron-down" style={{ fontSize: 15, color: 'var(--color-sage)' }} aria-hidden /></RS.Icon>

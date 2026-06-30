@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { pushSupported, notifPermission, isSubscribed, enablePush, disablePush, sendTestPush } from '../lib/push'
 import Card from './ui/Card'
+import SettingHeader from './ui/SettingHeader'
 
 // Activar / desactivar notificaciones push en este dispositivo (hub "Yo").
 export default function NotifToggle() {
@@ -31,7 +32,7 @@ export default function NotifToggle() {
 
   return (
     <Card style={{ display: 'grid', gap: 8 }}>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>🔔 Notificaciones</div>
+      <SettingHeader icon="ti-bell" title="Notificaciones" />
       <div style={{ fontSize: 12.5, color: 'var(--color-sage)' }}>
         Avisos de vencimientos y recordatorios en este dispositivo. En iPhone necesitás tener la app instalada (desde Safari).
       </div>

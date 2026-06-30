@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { apiGet, apiPost } from '../lib/api'
 import Card from './ui/Card'
+import SettingHeader from './ui/SettingHeader'
 
 // webcal:// hace que el iPhone/Apple Calendar ofrezca "Suscribirse" de un toque.
 function toWebcal(u: string): string {
@@ -46,12 +47,12 @@ export default function CalendarSubscribe() {
   }
 
   if (!open) {
-    return <button onClick={load} style={linkBtn}>📅 Suscribir mi calendario</button>
+    return <button onClick={load} style={linkBtn}><i className="ti ti-calendar" style={{ fontSize: 17, color: 'var(--color-sage)', marginRight: 8, verticalAlign: '-2px' }} aria-hidden />Suscribir mi calendario</button>
   }
 
   return (
     <Card style={{ display: 'grid', gap: 10 }}>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>📅 Tu calendario en Google / Apple</div>
+      <SettingHeader icon="ti-calendar" title="Tu calendario en Google / Apple" />
       <div style={{ fontSize: 12.5, color: 'var(--color-sage)' }}>
         Vas a ver tus <b>eventos y recordatorios</b> de Yumi dentro de tu calendario. Es de solo lectura
         y se actualiza solo cada varias horas (no al instante).

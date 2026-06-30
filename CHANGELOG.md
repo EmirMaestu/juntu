@@ -6,6 +6,11 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.10.9] - 2026-06-30
+### Changed
+- **Rediseño del hub "Yo".** Sin emojis (iconos Tabler consistentes en toda la pantalla), header de perfil con avatar, mejor jerarquía y espaciado, y filas de cuenta (admin/exportar/cerrar sesión) prolijas con icono.
+- **Privacidad reescrita en lenguaje claro:** explica qué compartís, quién lo ve y qué pasa al activar/desactivar "Compartir todo".
+
 ## [0.10.8] - 2026-06-30
 ### Added
 - **Modo oscuro.** Toggle **Sistema / Claro / Oscuro** en "Yo" (perfil y ajustes); recuerda tu preferencia y, en "Sistema", sigue al tema del dispositivo.

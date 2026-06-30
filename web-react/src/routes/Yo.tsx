@@ -4,16 +4,18 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useMe } from '../hooks/useMe'
 import { apiPost } from '../lib/api'
 import Card from '../components/ui/Card'
+import SettingHeader from '../components/ui/SettingHeader'
 import ThemeToggle from '../components/ThemeToggle'
 import NotifToggle from '../components/NotifToggle'
 import CalendarSubscribe from '../components/CalendarSubscribe'
 
-// Hub "Yo": todo lo de cuenta/usuario, antes disperso en el drawer lateral.
+// Hub "Yo": perfil + ajustes (privacidad, tema, notificaciones, calendario, cuenta).
 export default function Yo() {
   const { data: me } = useMe()
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const shareAll = !!me?.share_all
+  const initial = (me?.name?.[0] ?? '·').toUpperCase()
 
   const toggleShareAll = async () => {
     setBusy(true)
@@ -26,22 +28,36 @@ export default function Yo() {
   }
 
   return (
-    <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 12 }}>
+    <div style={{ padding: '14px 18px 28px', display: 'grid', gap: 14 }}>
       <div className="cap">Yo</div>
 
+      {/* Perfil */}
       <Card>
-        <div style={{ fontSize: 15, fontWeight: 500 }}>{me?.name ?? '…'}</div>
-        <div style={{ fontSize: 13, color: 'var(--color-sage)' }}>{me?.username}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={avatar}>{initial}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>{me?.name ?? '…'}</div>
+            {me?.username && <div style={{ fontSize: 13, color: 'var(--color-sage)' }}>@{me.username}</div>}
+          </div>
+        </div>
       </Card>
 
-      <Card style={{ display: 'grid', gap: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>🔒 Privacidad</div>
-        <div style={{ fontSize: 12.5, color: 'var(--color-sage)' }}>
-          Todo lo tuyo es privado por default. Podés compartir cosas puntuales (una cuenta, un evento)
-          o todo de una con este interruptor. Para ver los datos de tu pareja/hogar usá el selector de arriba.
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 2 }}>
-          <span style={{ fontSize: 14 }}>Compartir <b>todo</b> con mi pareja/hogar</span>
+      {/* Privacidad */}
+      <Card style={{ display: 'grid', gap: 12 }}>
+        <SettingHeader icon="ti-lock" title="Privacidad" />
+        <p style={hint}>
+          Todo lo que cargás es <b>privado</b>: solo lo ves vos. Podés compartir cosas sueltas
+          (una cuenta, una nota, una lista) desde cada una, o todo de una con el interruptor de abajo.
+        </p>
+        <div style={rowBetween}>
+          <div style={{ minWidth: 0, paddingRight: 10 }}>
+            <div style={{ fontSize: 14 }}>Compartir todo con mi hogar</div>
+            <div style={subHint}>
+              {shareAll
+                ? 'Las personas de tu plan ven todo lo tuyo (cuentas, gastos, tareas, listas, notas y agenda).'
+                : 'Solo ves lo tuyo. Nadie de tu plan ve tus cosas salvo las que compartas a mano.'}
+            </div>
+          </div>
           <button onClick={toggleShareAll} disabled={busy} style={shareAll ? onBtn : offBtn}>
             {busy ? '…' : shareAll ? 'Activado' : 'Desactivado'}
           </button>
@@ -52,14 +68,38 @@ export default function Yo() {
       <NotifToggle />
       <CalendarSubscribe />
 
-      {me?.is_admin && (
-        <Link to="/admin" style={rowLink}><i className="ti ti-shield-lock" style={{ marginRight: 8 }} aria-hidden />Panel de administración</Link>
-      )}
-      <a href="/api/export.csv" style={rowLink}><i className="ti ti-download" style={{ marginRight: 8 }} aria-hidden />Exportar CSV</a>
-      <button onClick={logout} style={rowBtn}><i className="ti ti-logout" style={{ marginRight: 8 }} aria-hidden />Cerrar sesión</button>
-      <a href="/legacy/" style={{ ...rowLink, color: 'var(--color-sage)', fontSize: 13 }}>Dashboard viejo →</a>
+      {/* Cuenta */}
+      <Card style={{ padding: '2px 14px' }}>
+        {me?.is_admin && <Row to="/admin" icon="ti-shield-lock" label="Panel de administración" />}
+        <Row href="/api/export.csv" icon="ti-download" label="Exportar CSV" />
+        <Row onClick={logout} icon="ti-logout" label="Cerrar sesión" />
+        <Row href="/legacy/" icon="ti-external-link" label="Dashboard viejo" muted last />
+      </Card>
     </div>
   )
+}
+
+// Fila de acción reutilizable (link interno, link externo o botón).
+function Row({ to, href, onClick, icon, label, muted, last }: {
+  to?: string; href?: string; onClick?: () => void; icon: string; label: string; muted?: boolean; last?: boolean
+}) {
+  const inner = (
+    <>
+      <i className={`ti ${icon}`} style={{ fontSize: 18, color: muted ? 'var(--color-sage)' : 'var(--color-obsidian-ink)' }} aria-hidden />
+      <span style={{ flex: 1 }}>{label}</span>
+      {(to || href) && !muted && <i className="ti ti-chevron-right" style={{ fontSize: 16, color: 'var(--color-sage)' }} aria-hidden />}
+    </>
+  )
+  const style: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+    padding: '13px 0', fontSize: 15, font: 'inherit', textAlign: 'left',
+    color: muted ? 'var(--color-sage)' : 'var(--color-obsidian-ink)',
+    background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'none',
+    borderBottom: last ? 'none' : '1px solid var(--color-mist)',
+  }
+  if (to) return <Link to={to} style={style}>{inner}</Link>
+  if (href) return <a href={href} style={style}>{inner}</a>
+  return <button onClick={onClick} style={style}>{inner}</button>
 }
 
 async function logout() {
@@ -67,7 +107,13 @@ async function logout() {
   location.assign('/app/login')
 }
 
-const rowLink: React.CSSProperties = { color: 'var(--color-obsidian-ink)', textDecoration: 'none', fontSize: 15, padding: '8px 0', display: 'flex', alignItems: 'center' }
-const rowBtn: React.CSSProperties = { ...rowLink, background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', font: 'inherit' }
-const onBtn: React.CSSProperties = { background: 'var(--color-voltage)', color: 'var(--voltage-on-dark)', border: 'none', borderRadius: 9999, padding: '6px 14px', fontSize: 13, fontWeight: 500, cursor: 'pointer', font: 'inherit', flexShrink: 0 }
+const avatar: React.CSSProperties = {
+  width: 46, height: 46, borderRadius: '50%', flexShrink: 0,
+  background: 'var(--color-pollen)', color: 'var(--voltage-on-dark)',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500,
+}
+const hint: React.CSSProperties = { margin: 0, fontSize: 12.5, color: 'var(--color-sage)', lineHeight: 1.5 }
+const subHint: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-sage)', lineHeight: 1.45, marginTop: 2 }
+const rowBetween: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }
+const onBtn: React.CSSProperties = { background: 'var(--color-voltage)', color: 'var(--voltage-on-dark)', border: 'none', borderRadius: 9999, padding: '7px 15px', fontSize: 13, fontWeight: 500, cursor: 'pointer', font: 'inherit', flexShrink: 0 }
 const offBtn: React.CSSProperties = { ...onBtn, background: 'var(--color-mist)', color: 'var(--color-sage)' }

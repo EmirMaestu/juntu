@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { getThemePref, setThemePref, type ThemePref } from '../lib/theme'
 import Card from './ui/Card'
+import SettingHeader from './ui/SettingHeader'
 
 const OPTS: { v: ThemePref; label: string; icon: string }[] = [
   { v: 'system', label: 'Sistema', icon: 'ti-device-mobile' },
@@ -13,7 +14,7 @@ export default function ThemeToggle() {
   const choose = (p: ThemePref) => { setThemePref(p); setPref(p) }
   return (
     <Card style={{ display: 'grid', gap: 8 }}>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>🎨 Tema</div>
+      <SettingHeader icon="ti-palette" title="Tema" />
       <div style={{ display: 'flex', gap: 4, background: 'var(--color-mist)', borderRadius: 10, padding: 3 }}>
         {OPTS.map((o) => (
           <button key={o.v} onClick={() => choose(o.v)} style={{

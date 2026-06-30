@@ -96,7 +96,7 @@ export default function ShareSheet({
                   </span>
                   <span style={{ flex: 1, textAlign: 'left', fontSize: 14 }}>{m.name}</span>
                   <i
-                    className={`ti ${on ? 'ti-circle-check-filled' : 'ti-circle'}`}
+                    className={`ti ${on ? 'ti-circle-check' : 'ti-circle'}`}
                     style={{ fontSize: 20, color: on ? 'var(--color-voltage)' : 'var(--color-mist)' }}
                     aria-hidden
                   />
@@ -149,7 +149,7 @@ function OptionRow({
         <span style={{ display: 'block', fontSize: 12, color: 'var(--color-sage)' }}>{desc}</span>
       </span>
       <i
-        className={`ti ${active ? 'ti-circle-check-filled' : 'ti-circle'}`}
+        className={`ti ${active ? 'ti-circle-check' : 'ti-circle'}`}
         style={{ fontSize: 20, color: active ? 'var(--color-voltage)' : 'var(--color-mist)' }}
         aria-hidden
       />

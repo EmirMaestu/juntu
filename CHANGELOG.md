@@ -6,6 +6,12 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-06-30
+### Fixed
+- **Montos que se cortaban en la card "Plata" de Inicio** (ej. "Disponible $1.140.000") → ahora escalan y no desbordan el borde.
+### Changed
+- **Criterio unificado del botón "volver":** solo en pantallas de segundo nivel (a las que se entra desde otra). Agregado en Movimientos, Tarjetas, Cuentas, Categorías, Recurrentes, Admin y Buscar; quitado de Hábitos, Listas y Notas (son de primer nivel — viven en "Más").
+
 ## [0.10.6] - 2026-06-29
 ### Changed
 - **Inicio rediseñado con barra "Más".** Inicio queda limpio (solo tu día + plata + pendientes). La barra inferior pasa a `Inicio · Finanzas · + · Agenda · Más`: el botón **"Más"** abre una hoja con **Tareas, Listas, Hábitos, Notas y Yo**. Se quitaron las cards de secciones de Inicio.

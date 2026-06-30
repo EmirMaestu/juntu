@@ -7,6 +7,7 @@ import { useAccounts } from '../hooks/useAccounts'
 import { formatMoney } from '../lib/format'
 import { type Recurring } from '../lib/types'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import CardActions from '../components/ui/CardActions'
@@ -222,6 +223,7 @@ export default function Recurrentes() {
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 14 }}>
       {/* Page header */}
       <div style={{ display: 'flex', alignItems: 'center' }}>
+        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Recurrentes y cuotas</div>
         <button onClick={() => setNewOpen(true)} style={ghostBtn}>+ Nuevo</button>
       </div>

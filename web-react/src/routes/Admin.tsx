@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 import Select from '../components/ui/Select'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { useMe } from '../hooks/useMe'
@@ -35,7 +36,7 @@ export default function Admin() {
 
   return (
     <div style={{ padding: '14px 18px 28px', display: 'grid', gap: 16 }}>
-      <div className="cap">Admin · panel</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BackButton /><div className="cap">Admin · panel</div></div>
 
       {ov.isError && <Card style={errCard}>No se pudo cargar el panel (¿sos admin? ¿reiniciaste la web?).</Card>}
       {o && !o.usage_ready && (

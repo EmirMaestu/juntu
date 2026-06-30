@@ -7,6 +7,7 @@ import { formatMoney } from '../lib/format'
 import { type Account } from '../lib/types'
 import { cicloEnCurso } from '../lib/cards'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 import AlertPill from '../components/ui/AlertPill'
 import { TarjetasSkeleton } from '../components/ui/skeletons'
 import EmptyState from '../components/ui/EmptyState'
@@ -33,7 +34,7 @@ export default function Tarjetas() {
 
   return (
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 14 }}>
-      <div className="cap">Tarjetas y cuotas</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BackButton /><div className="cap">Tarjetas y cuotas</div></div>
       {cards.map((card) => {
         const v = venc.data?.find((x) => x.account_id === card.id)
         const aPagarMes = cicloEnCurso(card.id, v, recurring.data)

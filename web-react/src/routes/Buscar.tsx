@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { type Transaction } from '../lib/types'
 import EmptyState from '../components/ui/EmptyState'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ export default function Buscar() {
   return (
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 12 }}>
       {/* Header */}
-      <div className="cap">Buscar</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BackButton /><div className="cap">Buscar</div></div>
 
       {/* Search box */}
       <input

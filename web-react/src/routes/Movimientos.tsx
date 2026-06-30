@@ -9,6 +9,7 @@ import { formatMoney } from '../lib/format'
 import { type Transaction } from '../lib/types'
 import { MovimientosSkeleton } from '../components/ui/skeletons'
 import EmptyState from '../components/ui/EmptyState'
+import BackButton from '../components/ui/BackButton'
 import Select from '../components/ui/Select'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
@@ -66,6 +67,7 @@ export default function Movimientos() {
   return (
     <div style={{ padding: '14px 18px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Movimientos</div>
         {!selectMode
           ? <button onClick={() => setSelectMode(true)} style={selectModeBtn}>Seleccionar</button>

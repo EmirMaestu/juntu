@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form'
 import { useCategories, useCategoryMutations } from '../hooks/useCategories'
 import { type Category } from '../lib/types'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 import EmptyState from '../components/ui/EmptyState'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
@@ -46,6 +47,7 @@ export default function Categorias() {
   return (
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
+        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Categorías</div>
         <button onClick={() => setCreateOpen(true)} style={ghostBtn}>+ Nueva categoría</button>
       </div>

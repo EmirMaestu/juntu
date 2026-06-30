@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useListas, useListaTemplates, useListasMutations } from '../hooks/useListas'
 import { type Lista } from '../lib/types'
 import Card from '../components/ui/Card'
-import BackButton from '../components/ui/BackButton'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import EmptyState from '../components/ui/EmptyState'
@@ -238,7 +237,6 @@ export default function Listas() {
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 14 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Listas</div>
         {templateList.length > 0 && (
           <button onClick={() => setTemplateOpen(true)} style={ghostBtn}>

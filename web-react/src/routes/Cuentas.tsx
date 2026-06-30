@@ -7,6 +7,7 @@ import { type Account } from '../lib/types'
 import { arsBalance, enCuotas, deudaTotal } from '../lib/cards'
 import { formatMoney } from '../lib/format'
 import Card from '../components/ui/Card'
+import BackButton from '../components/ui/BackButton'
 import { CuentasSkeleton } from '../components/ui/skeletons'
 import EmptyState from '../components/ui/EmptyState'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
@@ -45,6 +46,7 @@ export default function Cuentas() {
   return (
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
+        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Cuentas</div>
         <button onClick={() => setCreateOpen(true)} style={ghostBtn}>+ Nueva cuenta</button>
       </div>

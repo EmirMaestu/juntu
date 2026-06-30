@@ -5,7 +5,6 @@ import { z } from 'zod'
 import { useNotas, useNotasMutations } from '../hooks/useNotas'
 import { type Nota } from '../lib/types'
 import Card from '../components/ui/Card'
-import BackButton from '../components/ui/BackButton'
 import CardActions from '../components/ui/CardActions'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
@@ -135,7 +134,6 @@ export default function Notas() {
     <div style={{ padding: '14px 18px 24px', display: 'grid', gap: 14 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center' }}>
-        <BackButton />
         <div className="cap" style={{ flex: 1 }}>Notas</div>
         <button onClick={() => setNewOpen(true)} style={ghostBtn}>+ Nueva</button>
       </div>

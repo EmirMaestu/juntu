@@ -190,15 +190,15 @@ export default function Hoy() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <div>
                 <div className="cap" style={{ fontSize: 10 }}>Gastado</div>
-                <div className="num-serif" style={{ fontSize: 18, marginTop: 2 }}>{formatMoney(k.gasto_mes)}</div>
+                <div className="num-serif" style={{ fontSize: 'clamp(13px, 4vw, 16px)', marginTop: 2, whiteSpace: 'nowrap' }}>{formatMoney(k.gasto_mes)}</div>
               </div>
               <div>
                 <div className="cap" style={{ fontSize: 10 }}>A pagar</div>
-                <div className="num-serif" style={{ fontSize: 18, marginTop: 2 }}>{formatMoney(cicloEnCursoTotal(venc.data, recurring.data))}</div>
+                <div className="num-serif" style={{ fontSize: 'clamp(13px, 4vw, 16px)', marginTop: 2, whiteSpace: 'nowrap' }}>{formatMoney(cicloEnCursoTotal(venc.data, recurring.data))}</div>
               </div>
               <div>
                 <div className="cap" style={{ fontSize: 10 }}>Disponible</div>
-                <div className="num-serif" style={{ fontSize: 18, marginTop: 2 }}>{formatMoney(k.disponible)}</div>
+                <div className="num-serif" style={{ fontSize: 'clamp(13px, 4vw, 16px)', marginTop: 2, whiteSpace: 'nowrap' }}>{formatMoney(k.disponible)}</div>
               </div>
             </div>
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--color-sage)', textAlign: 'right' }}>Ver finanzas →</div>

@@ -507,7 +507,7 @@ function RecordatorioCard({
               onClick={() => setShowSnooze((v) => !v)}
               style={{ ...ghostBtn, marginTop: 6, padding: '4px 10px', fontSize: 12 }}
             >
-              <i className="ti ti-clock-snooze" aria-hidden /> Posponer
+              <i className="ti ti-alarm-snooze" aria-hidden /> Posponer
             </button>
           )}
           {showSnooze && (

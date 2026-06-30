@@ -6,6 +6,12 @@ Todas las novedades relevantes de Yumi. Formato basado en [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-06-30
+### Changed
+- **Iconos cargan casi al instante.** Antes se bajaba toda la tipografía de iconos (~447 KB, 5.800 iconos) y se veían en blanco hasta que terminaba; ahora se genera un **subset con solo los iconos en uso (~6 KB)** y se **precarga**. Mejora notoria en primera carga y al refrescar fuerte (típico tras deployar).
+### Fixed
+- Iconos que no se mostraban porque su clase no existía en la fuente: el check ✓ del selector de "Compartir" (usaba una variante *filled* no incluida) y el botón **Posponer** de Agenda (`ti-clock-snooze` → `ti-alarm-snooze`).
+
 ## [0.11.1] - 2026-06-30
 ### Changed
 - **Todo nace privado.** Las **listas** ahora se crean **privadas** (antes nacían compartidas con todo el plan); después las compartís con el botón "Compartir". (Gastos/cuentas, notas, tareas, eventos y recordatorios ya nacían privados — sin cambios.)

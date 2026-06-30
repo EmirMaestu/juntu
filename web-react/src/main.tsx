@@ -4,7 +4,7 @@ import '@fontsource/inter/300.css'
 import '@fontsource/inter/400.css'
 import '@fontsource/inter/500.css'
 import '@fontsource/fraunces/300.css'
-import '@tabler/icons-webfont/dist/tabler-icons.min.css'
+import './styles/tabler-icons-subset.css' // subset (solo iconos usados) — generado por scripts/build-icons.mjs
 import './styles/theme.css'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
